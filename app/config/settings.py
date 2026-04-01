@@ -6,7 +6,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL, make_url
 
 
 class PollingIntervals(BaseModel):
@@ -59,8 +59,18 @@ class Settings(BaseSettings):
 
 def make_sync_sqlalchemy_url(database_url: str) -> str:
     url = make_url(database_url)
-    if "+" not in url.drivername:
-        return database_url
+    if url.get_backend_name() == "sqlite" and "+" in url.drivername:
+        return str(url.set(drivername="sqlite"))
+    return database_url
 
-    sync_driver = url.drivername.split("+", maxsplit=1)[0]
-    return str(url.set(drivername=sync_driver))
+
+def ensure_sqlite_database_parent_dir(database_url: str | URL) -> None:
+    url = make_url(str(database_url))
+    if url.get_backend_name() != "sqlite":
+        return
+
+    db_path = url.database
+    if not db_path or db_path == ":memory:":
+        return
+
+    Path(db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
