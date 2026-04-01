@@ -6,7 +6,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from app.config.settings import make_sync_sqlalchemy_url
+from app.config.settings import ensure_sqlite_database_parent_dir, make_sync_sqlalchemy_url
 from app.db.base import Base
 from app.models import *  # noqa: F401,F403
 
@@ -32,6 +32,7 @@ def get_migration_url() -> str:
 
 def run_migrations_offline() -> None:
     url = get_migration_url()
+    ensure_sqlite_database_parent_dir(url)
     context.configure(url=url, target_metadata=target_metadata, literal_binds=True, compare_type=True)
 
     with context.begin_transaction():
@@ -41,6 +42,7 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     alembic_config = config.get_section(config.config_ini_section, {})
     alembic_config["sqlalchemy.url"] = get_migration_url()
+    ensure_sqlite_database_parent_dir(alembic_config["sqlalchemy.url"])
     connectable = engine_from_config(
         alembic_config,
         prefix="sqlalchemy.",

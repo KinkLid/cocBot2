@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from app.config.settings import Settings, make_sync_sqlalchemy_url
+from pathlib import Path
+
+from app.config.settings import Settings, ensure_sqlite_database_parent_dir, make_sync_sqlalchemy_url
 
 
 def test_make_sync_sqlalchemy_url_converts_async_sqlite_url() -> None:
@@ -16,3 +18,14 @@ def test_migration_database_url_prefers_explicit_sync_url() -> None:
     )
 
     assert settings.migration_database_url == "sqlite:///./data/migrations.sqlite3"
+
+
+def test_make_sync_sqlalchemy_url_preserves_absolute_sqlite_path() -> None:
+    assert make_sync_sqlalchemy_url("sqlite+aiosqlite:////root/cocBot2/data/clanbot.db") == "sqlite:////root/cocBot2/data/clanbot.db"
+
+
+def test_ensure_sqlite_database_parent_dir_creates_missing_directory(tmp_path: Path) -> None:
+    db_path = tmp_path / "nested" / "db" / "clanbot.sqlite3"
+    ensure_sqlite_database_parent_dir(f"sqlite:///{db_path}")
+
+    assert db_path.parent.exists()
