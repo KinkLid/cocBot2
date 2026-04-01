@@ -6,6 +6,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
 
 
 class PollingIntervals(BaseModel):
@@ -34,6 +35,7 @@ class Settings(BaseSettings):
     bot_token: str
     clash_api_token: str
     database_url: str = "sqlite+aiosqlite:///./data/clanbot.sqlite3"
+    database_url_sync: str | None = None
     config_path: str = "./config.yaml"
     log_file: str = "./logs/clanbot.log"
     telegram_request_timeout_seconds: int = 20
@@ -41,9 +43,24 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
+    @property
+    def migration_database_url(self) -> str:
+        if self.database_url_sync:
+            return self.database_url_sync
+        return make_sync_sqlalchemy_url(self.database_url)
+
     def load_yaml_config(self) -> AppYamlConfig:
         path = Path(self.config_path)
         if not path.exists():
             raise FileNotFoundError(f"Файл конфигурации не найден: {path}")
         data: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         return AppYamlConfig.model_validate(data)
+
+
+def make_sync_sqlalchemy_url(database_url: str) -> str:
+    url = make_url(database_url)
+    if "+" not in url.drivername:
+        return database_url
+
+    sync_driver = url.drivername.split("+", maxsplit=1)[0]
+    return str(url.set(drivername=sync_driver))
