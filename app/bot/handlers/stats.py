@@ -9,6 +9,7 @@ from aiogram.types import CallbackQuery, Message
 
 from app.bot.keyboards.common import account_keyboard, period_keyboard
 from app.bot.states.period import PeriodSelectionStates
+from app.bot.utils.telegram_text import send_long_message
 from app.container import AppContext
 from app.repositories.telegram_user import TelegramUserRepository
 from app.services.period import PeriodService
@@ -129,7 +130,7 @@ async def _send_my_stats(message: Message, state: FSMContext, mode: str, app_con
             stats = await stats_service.player_stats(period.start, period.end, player_tag)
             text = stats_service.format_player_card(stats, period.start.date().isoformat(), period.end.date().isoformat())
         await state.clear()
-        await message.answer(text)
+        await send_long_message(message, text)
     except ValueError as exc:
         await state.clear()
         if "Недостаточно данных" in str(exc):
@@ -183,7 +184,7 @@ async def custom_period_end(message: Message, state: FSMContext, app_context: Ap
             text = stats_service.format_player_card(stats, period.start.date().isoformat(), period.end.date().isoformat())
 
         await state.clear()
-        await message.answer(text)
+        await send_long_message(message, text)
     except ValueError as exc:
         if "does not match format" in str(exc):
             await message.answer(BAD_DATE_FORMAT_ERROR)

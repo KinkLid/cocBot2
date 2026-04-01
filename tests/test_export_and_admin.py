@@ -2,15 +2,19 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from unittest.mock import AsyncMock
 
-from app.bot.handlers.admin import dev_contribution, download_log_file, last_logs, update_chat_link_finish, update_chat_link_start
+from app.bot.handlers.admin import admin_clan_stats, admin_players_sort, dev_contribution, download_log_file, last_logs, update_chat_link_finish, update_chat_link_start
 from app.bot.handlers.common import clan_chat_link
 from app.bot.states.chat_link import ChatLinkStates
 from app.services.clan_chat import ClanChatService
 from app.services.export import ExportService
-from tests.fakes import FakeMessage, FakeState
+from app.services.period import PeriodService
+from app.services.stats import FormattedStats, StatsService
+from tests.fakes import FakeCallback, FakeMessage, FakeState
 from tests.test_stats import seed_stats_data
 
 
@@ -70,7 +74,7 @@ async def test_last_200_log_lines_are_returned(app_context):
     log_path.write_text("\n".join(f"line {i}" for i in range(250)), encoding="utf-8")
     message = FakeMessage(text="📜 Последние логи", user_id=1)
     await last_logs(message, app_context)
-    output = message.answer.await_args.args[0]
+    output = "".join(call.args[0] for call in message.answer.await_args_list)
     assert "line 249" in output
     assert "line 40" not in output
 
@@ -90,3 +94,76 @@ async def test_dev_contribution_button_is_admin_only(app_context):
     message = FakeMessage(text="🧪 Dev-вклад", user_id=999)
     await dev_contribution(message, app_context)
     assert "Недостаточно прав" in message.answer.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_admin_clan_stats_split_for_big_report(app_context, monkeypatch):
+    long_text = ("Игрок\n" * 1500)
+
+    async def fake_current_cycle(self):
+        return SimpleNamespace(start=datetime(2026, 4, 1, 0, tzinfo=UTC), end=datetime(2026, 4, 2, 0, tzinfo=UTC))
+
+    async def fake_clan_stats(self, period_start, period_end, sort_by="clan_order"):
+        return FormattedStats(text=long_text, rows=[])
+
+    monkeypatch.setattr(PeriodService, "current_cycle", fake_current_cycle)
+    monkeypatch.setattr(StatsService, "clan_stats", fake_clan_stats)
+
+    message = FakeMessage(text="📈 Статистика клана", user_id=1)
+    await admin_clan_stats(message, app_context)
+
+    assert message.answer.await_count > 1
+    delivered = "".join(call.args[0] for call in message.answer.await_args_list)
+    assert delivered == long_text
+
+
+@pytest.mark.asyncio
+async def test_admin_players_list_callback_sends_chunks_when_report_too_long(app_context, monkeypatch):
+    long_text = "A" * 5000
+
+    async def fake_current_cycle(self):
+        return SimpleNamespace(start=datetime(2026, 4, 1, 0, tzinfo=UTC), end=datetime(2026, 4, 2, 0, tzinfo=UTC))
+
+    async def fake_clan_stats(self, period_start, period_end, sort_by="clan_order"):
+        return FormattedStats(text=long_text, rows=[])
+
+    monkeypatch.setattr(PeriodService, "current_cycle", fake_current_cycle)
+    monkeypatch.setattr(StatsService, "clan_stats", fake_clan_stats)
+
+    callback = FakeCallback(data="admin_sort:stars", user_id=1)
+    await admin_players_sort(callback, app_context)
+
+    callback.message.edit_text.assert_awaited()
+    notice = callback.message.edit_text.await_args.args[0]
+    assert "Отчет слишком большой" in notice
+    assert callback.message.answer.await_count > 1
+    delivered = "".join(call.args[0] for call in callback.message.answer.await_args_list)
+    assert delivered == long_text
+
+
+@pytest.mark.asyncio
+async def test_message_too_long_error_no_longer_reproduced_in_admin_callback(app_context, monkeypatch):
+    long_text = "B" * 5000
+
+    async def fake_current_cycle(self):
+        return SimpleNamespace(start=datetime(2026, 4, 1, 0, tzinfo=UTC), end=datetime(2026, 4, 2, 0, tzinfo=UTC))
+
+    async def fake_clan_stats(self, period_start, period_end, sort_by="clan_order"):
+        return FormattedStats(text=long_text, rows=[])
+
+    monkeypatch.setattr(PeriodService, "current_cycle", fake_current_cycle)
+    monkeypatch.setattr(StatsService, "clan_stats", fake_clan_stats)
+
+    callback = FakeCallback(data="admin_sort:place", user_id=1)
+
+    async def guarded_edit(text: str, **kwargs):
+        if len(text) > 4096:
+            raise RuntimeError("MESSAGE_TOO_LONG")
+        return None
+
+    callback.message.edit_text = AsyncMock(side_effect=guarded_edit)
+
+    await admin_players_sort(callback, app_context)
+
+    assert callback.message.answer.await_count > 1
+    callback.answer.assert_awaited()
