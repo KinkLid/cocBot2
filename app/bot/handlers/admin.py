@@ -5,6 +5,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, FSInputFile, Message
 
 from app.bot.keyboards.common import admin_sort_keyboard
+from app.bot.utils.telegram_text import edit_or_send_long_message, send_long_message
 from app.bot.states.chat_link import ChatLinkStates
 from app.container import AppContext
 from app.services.clan_chat import ClanChatService
@@ -42,7 +43,7 @@ async def admin_players_sort(callback: CallbackQuery, app_context: AppContext) -
     async with app_context.session_maker() as session:
         period = await PeriodService(session).current_cycle()
         stats = await StatsService(session, app_context.config).clan_stats(period.start, period.end, sort_by=sort_by)
-    await callback.message.edit_text(stats.text or "Нет данных")
+    await edit_or_send_long_message(callback.message, stats.text or "Нет данных")
     await callback.answer()
 
 
@@ -56,7 +57,7 @@ async def admin_clan_stats(message: Message, app_context: AppContext) -> None:
     async with app_context.session_maker() as session:
         period = await PeriodService(session).current_cycle()
         stats = await StatsService(session, app_context.config).clan_stats(period.start, period.end)
-    await message.answer(stats.text or "Нет данных")
+    await send_long_message(message, stats.text or "Нет данных")
 
 
 @router.message(F.text == "📦 Выгрузка JSON")
@@ -83,7 +84,7 @@ async def dev_contribution(message: Message, app_context: AppContext) -> None:
     async with app_context.session_maker() as session:
         period = await PeriodService(session).current_cycle()
         text = await DevContributionService(session, app_context.config).report(period.start, period.end)
-    await message.answer(text)
+    await send_long_message(message, text)
 
 
 @router.message(F.text == "✏️ Обновить ссылку на чат")
@@ -113,7 +114,7 @@ async def last_logs(message: Message, app_context: AppContext) -> None:
         await message.answer("⛔ Недостаточно прав")
         return
     text = app_context.log_service.tail(200)
-    await message.answer(("📜 Последние 200 строк лога:\n" + text)[-3900:])
+    await send_long_message(message, "📜 Последние 200 строк лога:\n" + text)
 
 
 @router.message(F.text == "🗂 Скачать лог-файл")
