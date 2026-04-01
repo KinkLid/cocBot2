@@ -12,6 +12,7 @@ from app.config.settings import Settings
 from app.container import build_context, send_text_via_bot
 from app.db.session import create_engine_and_sessionmaker
 from app.jobs.scheduler import create_scheduler
+from app.services.startup_sync import StartupSyncService
 from app.utils.logging import configure_logging
 
 logger = logging.getLogger(__name__)
@@ -26,9 +27,13 @@ async def run() -> None:
 
     bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = create_dispatcher(app_context)
-    scheduler = create_scheduler(app_context, lambda chat_id, text: send_text_via_bot(bot, chat_id, text))
+    sender = lambda chat_id, text: send_text_via_bot(bot, chat_id, text)
+    scheduler = create_scheduler(app_context, sender)
 
     try:
+        startup_report = await StartupSyncService(app_context, sender).run()
+        if not startup_report.clan_sync_ok:
+            logger.warning("Bot starts without fully synced clan roster; player stats may be incomplete")
         scheduler.start()
         logger.info("Bot started")
         await dp.start_polling(bot)

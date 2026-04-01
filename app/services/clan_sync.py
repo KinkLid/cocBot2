@@ -30,7 +30,7 @@ class ClanSyncService:
         self.players = PlayerAccountRepository(session)
         self.period_service = PeriodService(session)
 
-    async def sync_members(self) -> None:
+    async def sync_members(self) -> int:
         now = utcnow()
         clan_info = await self.clash_client.get_clan(self.config.main_clan_tag)
         members = await self.clash_client.get_clan_members(self.config.main_clan_tag)
@@ -78,6 +78,7 @@ class ClanSyncService:
 
         await self._purge_players_absent_full_cycle(now)
         await self.session.commit()
+        return len(members)
 
     async def _purge_players_absent_full_cycle(self, now) -> None:
         absent_players = await self.players.absent_players()
