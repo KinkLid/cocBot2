@@ -59,6 +59,7 @@ docker compose up -d --build
 - `BOT_TOKEN`
 - `CLASH_API_TOKEN`
 - `DATABASE_URL`
+- `DATABASE_URL_SYNC` (опционально, отдельный sync URL для Alembic)
 - `CONFIG_PATH`
 - `LOG_FILE`
 
