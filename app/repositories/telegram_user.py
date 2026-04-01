@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import TelegramPlayerLink, TelegramUser
@@ -26,6 +26,17 @@ class TelegramUserRepository:
     async def get_by_telegram_id(self, telegram_id: int) -> TelegramUser | None:
         result = await self.session.execute(select(TelegramUser).where(TelegramUser.telegram_id == telegram_id))
         return result.scalar_one_or_none()
+
+    async def is_registered(self, telegram_id: int) -> bool:
+        result = await self.session.execute(
+            select(
+                exists().where(
+                    TelegramUser.telegram_id == telegram_id,
+                    TelegramPlayerLink.telegram_user_id == TelegramUser.id,
+                )
+            )
+        )
+        return bool(result.scalar())
 
     async def add_link_if_missing(self, telegram_user_id: int, player_tag: str, now: datetime) -> TelegramPlayerLink:
         result = await self.session.execute(
