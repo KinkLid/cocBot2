@@ -1,0 +1,13 @@
+services:
+  clanbot:
+    build: .
+    container_name: coc-clanbot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./exports:/app/exports
+      - ./config.yaml:/app/config.yaml:ro
+    command: sh -c "alembic upgrade head && python -m app.main"

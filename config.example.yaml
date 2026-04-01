@@ -1,0 +1,10 @@
+main_clan_tag: "#2YCYJ9CQQ"
+admin_telegram_ids:
+  - 123456789
+  - 987654321
+clan_chat_url: "https://t.me/your_clan_chat"
+polling:
+  active_war_seconds: 90
+  clan_members_seconds: 900
+  housekeeping_seconds: 3600
+log_level: "INFO"

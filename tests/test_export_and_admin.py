@@ -1,0 +1,92 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+
+from app.bot.handlers.admin import dev_contribution, download_log_file, last_logs, update_chat_link_finish, update_chat_link_start
+from app.bot.handlers.common import clan_chat_link
+from app.bot.states.chat_link import ChatLinkStates
+from app.services.clan_chat import ClanChatService
+from app.services.export import ExportService
+from tests.fakes import FakeMessage, FakeState
+from tests.test_stats import seed_stats_data
+
+
+@pytest.mark.asyncio
+async def test_json_export_for_current_cycle(session, app_yaml_config, tmp_path: Path):
+    await seed_stats_data(session)
+    service = ExportService(session, app_yaml_config)
+    payload = await service.export_to_dict(datetime(2026, 4, 1, 0, tzinfo=UTC), datetime(2026, 4, 2, 23, tzinfo=UTC))
+    assert payload["clan"]["tag"] == "#CLAN"
+    assert payload["players"][0]["participation"]
+
+
+@pytest.mark.asyncio
+async def test_json_export_for_previous_cycle(session, app_yaml_config):
+    await seed_stats_data(session)
+    service = ExportService(session, app_yaml_config)
+    payload = await service.export_to_dict(datetime(2026, 3, 6, 0, tzinfo=UTC), datetime(2026, 4, 4, 0, tzinfo=UTC))
+    assert payload["period"]["start"].startswith("2026-03-06")
+
+
+@pytest.mark.asyncio
+async def test_json_export_for_custom_period(session, app_yaml_config, tmp_path: Path):
+    await seed_stats_data(session)
+    service = ExportService(session, app_yaml_config)
+    path = await service.export_to_file(datetime(2026, 4, 1, 0, tzinfo=UTC), datetime(2026, 4, 2, 23, tzinfo=UTC), tmp_path / "export.json")
+    assert path.exists()
+    assert '"players"' in path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_clan_chat_link_is_returned_to_user(session, app_context):
+    message = FakeMessage(text="🔗 Ссылка на чат клана")
+    await clan_chat_link(message, app_context)
+    message.answer.assert_awaited()
+    assert "https://t.me/test_clan_chat" in message.answer.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_admin_can_update_chat_link(session, app_context):
+    state = FakeState()
+    message_start = FakeMessage(text="✏️ Обновить ссылку на чат", user_id=1)
+    await update_chat_link_start(message_start, state, app_context)
+    assert state.state == str(ChatLinkStates.waiting_for_chat_link)
+
+    message_finish = FakeMessage(text="https://t.me/new_link", user_id=1)
+    await update_chat_link_finish(message_finish, state, app_context)
+    assert state.state is None
+    async with app_context.session_maker() as session2:
+        url = await ClanChatService(session2, app_context.config).get_chat_url()
+    assert url == "https://t.me/new_link"
+
+
+@pytest.mark.asyncio
+async def test_last_200_log_lines_are_returned(app_context):
+    log_path = app_context.log_service.file_path()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text("\n".join(f"line {i}" for i in range(250)), encoding="utf-8")
+    message = FakeMessage(text="📜 Последние логи", user_id=1)
+    await last_logs(message, app_context)
+    output = message.answer.await_args.args[0]
+    assert "line 249" in output
+    assert "line 40" not in output
+
+
+@pytest.mark.asyncio
+async def test_full_log_file_can_be_downloaded(app_context):
+    log_path = app_context.log_service.file_path()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text("hello", encoding="utf-8")
+    message = FakeMessage(text="🗂 Скачать лог-файл", user_id=1)
+    await download_log_file(message, app_context)
+    message.answer_document.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_dev_contribution_button_is_admin_only(app_context):
+    message = FakeMessage(text="🧪 Dev-вклад", user_id=999)
+    await dev_contribution(message, app_context)
+    assert "Недостаточно прав" in message.answer.await_args.args[0]

@@ -1,0 +1,16 @@
+[Unit]
+Description=Clash of Clans Clan Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/clanbot
+Environment=PYTHONPATH=/opt/clanbot
+ExecStart=/opt/clanbot/.venv/bin/python -m app.main
+Restart=always
+RestartSec=5
+User=ubuntu
+Group=ubuntu
+
+[Install]
+WantedBy=multi-user.target
