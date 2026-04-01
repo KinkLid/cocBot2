@@ -20,17 +20,50 @@ async def test_registration_fsm_flow(app_context, fake_clash_client):
     state = FakeState()
 
     start_message = FakeMessage(text="📝 Регистрация")
-    await start_registration(start_message, state)
+    await start_registration(start_message, state, app_context)
     assert state.state == str(RegistrationStates.waiting_for_player_tag)
 
     tag_message = FakeMessage(text="#P2")
-    await registration_player_tag(tag_message, state)
+    await registration_player_tag(tag_message, state, app_context)
     assert state.state == str(RegistrationStates.waiting_for_player_token)
 
     token_message = FakeMessage(text="GOOD")
     await registration_player_token(token_message, state, app_context)
     assert state.state is None
     assert "успешно" in token_message.answer.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_registration_fsm_stops_for_registered_user(app_context, session_maker):
+    async with session_maker() as session:
+        tg = TelegramUser(telegram_id=100, username="tester", registered_at=datetime(2026, 1, 1, tzinfo=UTC))
+        session.add(tg)
+        await session.flush()
+        session.add(TelegramPlayerLink(telegram_user_id=tg.id, player_tag="#P2", linked_at=datetime(2026, 1, 1, tzinfo=UTC)))
+        await session.commit()
+
+    state = FakeState()
+    state.state = str(RegistrationStates.waiting_for_player_tag)
+    message = FakeMessage(text="#P8", user_id=100)
+    await registration_player_tag(message, state, app_context)
+    assert state.state is None
+    assert "Вы уже зарегистрированы" in message.answer.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_start_registration_direct_call_is_blocked_for_registered_user(app_context, session_maker):
+    async with session_maker() as session:
+        tg = TelegramUser(telegram_id=101, username="tester2", registered_at=datetime(2026, 1, 1, tzinfo=UTC))
+        session.add(tg)
+        await session.flush()
+        session.add(TelegramPlayerLink(telegram_user_id=tg.id, player_tag="#P9", linked_at=datetime(2026, 1, 1, tzinfo=UTC)))
+        await session.commit()
+
+    state = FakeState()
+    message = FakeMessage(text="📝 Регистрация", user_id=101)
+    await start_registration(message, state, app_context)
+    assert state.state is None
+    assert "Вы уже зарегистрированы" in message.answer.await_args.args[0]
 
 
 @pytest.mark.asyncio

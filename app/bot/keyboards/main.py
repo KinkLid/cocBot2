@@ -3,12 +3,16 @@ from __future__ import annotations
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
 
-def main_menu(is_admin: bool) -> ReplyKeyboardMarkup:
-    rows = [
-        [KeyboardButton(text="📝 Регистрация")],
-        [KeyboardButton(text="🔗 Ссылка на чат клана")],
-        [KeyboardButton(text="📊 Моя статистика")],
-    ]
+def main_menu(is_admin: bool, is_registered: bool) -> ReplyKeyboardMarkup:
+    rows = []
+    if not is_registered:
+        rows.append([KeyboardButton(text="📝 Регистрация")])
+    rows.extend(
+        [
+            [KeyboardButton(text="🔗 Ссылка на чат клана")],
+            [KeyboardButton(text="📊 Моя статистика")],
+        ]
+    )
     if is_admin:
         rows.extend(
             [

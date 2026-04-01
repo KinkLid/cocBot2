@@ -19,6 +19,10 @@ class RegistrationResult:
     already_linked: bool
 
 
+class UserAlreadyRegisteredError(ValueError):
+    pass
+
+
 class RegistrationService:
     def __init__(self, session: AsyncSession, clash_client: ClashApiClient) -> None:
         self.session = session
@@ -26,9 +30,16 @@ class RegistrationService:
         self.telegram_users = TelegramUserRepository(session)
         self.players = PlayerAccountRepository(session)
 
-    async def register_player(self, *, telegram_id: int, username: str | None, player_tag: str, player_token: str) -> RegistrationResult:
+    async def is_registered(self, telegram_id: int) -> bool:
+        return await self.telegram_users.is_registered(telegram_id)
+
+    async def register_player(
+        self, *, telegram_id: int, username: str | None, player_tag: str, player_token: str, allow_existing_user: bool = False
+    ) -> RegistrationResult:
         now = utcnow()
         player_tag = normalize_tag(player_tag)
+        if not allow_existing_user and await self.is_registered(telegram_id):
+            raise UserAlreadyRegisteredError("Повторная регистрация не требуется")
 
         is_valid = await self.clash_client.verify_player_token(player_tag, player_token)
         if not is_valid:
@@ -55,4 +66,15 @@ class RegistrationService:
             player_tag=profile.tag,
             player_name=profile.name,
             already_linked=already_linked,
+        )
+
+    async def add_player_account(
+        self, *, telegram_id: int, username: str | None, player_tag: str, player_token: str
+    ) -> RegistrationResult:
+        return await self.register_player(
+            telegram_id=telegram_id,
+            username=username,
+            player_tag=player_tag,
+            player_token=player_token,
+            allow_existing_user=True,
         )
