@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.clash import ClashApiClient
 from app.config.settings import AppYamlConfig
 from app.domain.violation_rules import evaluate_attack_violation
 from app.models import Attack, Violation, War, WarParticipant
-from app.models.enums import ViolationCode, WarState, WarType
+from app.models.enums import WarState, WarType
 from app.repositories.player_account import PlayerAccountRepository
 from app.repositories.stats import StatsRepository
 from app.repositories.war import WarRepository
@@ -102,9 +100,16 @@ class WarSyncService:
             )
         )
 
-        participant_map: dict[str, WarParticipant] = {}
+        own_members_by_tag = {member.tag: member for member in own_side.members}
+        enemy_members_by_tag = {member.tag: member for member in enemy_side.members}
+
+        own_participants_by_tag: dict[str, WarParticipant] = {}
+        enemy_participants_by_tag: dict[str, WarParticipant] = {}
         participants: list[WarParticipant] = []
-        for is_own, side in ((True, own_side), (False, enemy_side)):
+        for is_own, side, participant_map in (
+            (True, own_side, own_participants_by_tag),
+            (False, enemy_side, enemy_participants_by_tag),
+        ):
             for member in side.members:
                 player = await self.players.get_by_tag(member.tag) if is_own else None
                 participant = WarParticipant(
@@ -121,18 +126,26 @@ class WarSyncService:
         await self.wars.replace_participants(war.id, participants)
 
         for member in own_side.members:
+            attacker_member = own_members_by_tag[member.tag]
             attacker_player = await self.players.get_by_tag(member.tag)
             attacker_player_id = attacker_player.id if attacker_player else None
             for attack_dto in member.attacks:
-                attacker_participant = participant_map.get(member.tag)
-                defender_participant = participant_map.get(attack_dto.defender_tag)
+                defender_member = enemy_members_by_tag.get(attack_dto.defender_tag)
+                if defender_member is None:
+                    logger.warning(
+                        "Cannot build attack snapshot from war roster: war_uid=%s attacker_tag=%s defender_tag=%s",
+                        war.war_uid,
+                        member.tag,
+                        attack_dto.defender_tag,
+                    )
+                    continue
 
-                attacker_position = attacker_participant.map_position if attacker_participant else member.map_position
-                attacker_th = attacker_participant.town_hall if attacker_participant else member.town_hall_level
-                attacker_name = attacker_participant.name if attacker_participant else member.name
-                defender_position = defender_participant.map_position if defender_participant else 0
-                defender_th = defender_participant.town_hall if defender_participant else 0
-                defender_name = defender_participant.name if defender_participant else attack_dto.defender_tag
+                attacker_position = attacker_member.map_position
+                attacker_th = attacker_member.town_hall_level
+                attacker_name = attacker_member.name
+                defender_position = defender_member.map_position
+                defender_th = defender_member.town_hall_level
+                defender_name = defender_member.name
 
                 existing_attack = await self.wars.get_attack(war.id, member.tag, attack_dto.defender_tag, attack_dto.order)
                 if existing_attack is not None:
@@ -144,6 +157,7 @@ class WarSyncService:
                     existing_attack.defender_town_hall = defender_th
                     existing_attack.stars = attack_dto.stars
                     existing_attack.destruction = attack_dto.destruction_percentage
+                    await self._reconcile_violation(war, existing_attack)
                     continue
                 observed_at = utcnow()
                 attack = await self.wars.add_attack(
@@ -164,56 +178,68 @@ class WarSyncService:
                         observed_at=observed_at,
                     )
                 )
-                await self._maybe_create_violation(war, attack)
+                await self._reconcile_violation(war, attack)
         return war
 
-    async def _maybe_create_violation(self, war: War, attack: Attack) -> None:
+    async def _reconcile_violation(self, war: War, attack: Attack) -> None:
         if war.is_friendly:
             return
+
         decision = evaluate_attack_violation(
             war_start_time=war.start_time,
             attack_seen_at=attack.observed_at,
             attacker_position=attack.attacker_position,
             defender_position=attack.defender_position,
         )
+        violation = await self.wars.get_violation_by_attack_id(attack.id)
+
         if not decision.violated or decision.code is None or decision.reason_text is None:
-            return
-        if await self.wars.get_violation_by_attack_id(attack.id) is not None:
+            if violation is not None:
+                await self.wars.delete_violation(violation)
             return
 
-        violation = await self.wars.add_violation(
-            Violation(
-                attack_id=attack.id,
-                war_id=war.id,
-                player_tag=attack.attacker_tag,
-                code=decision.code,
-                reason_text=decision.reason_text,
-                player_position=attack.attacker_position,
-                target_position=attack.defender_position,
-                detected_at=attack.observed_at,
+        if violation is None:
+            violation = await self.wars.add_violation(
+                Violation(
+                    attack_id=attack.id,
+                    war_id=war.id,
+                    player_tag=attack.attacker_tag,
+                    code=decision.code,
+                    reason_text=decision.reason_text,
+                    player_position=attack.attacker_position,
+                    target_position=attack.defender_position,
+                    detected_at=attack.observed_at,
+                )
             )
-        )
-        current_cycle = await self.period_service.current_cycle(attack.observed_at)
-        violation_number = await self.stats_repo.violation_count_for_player(attack.attacker_tag, current_cycle.start, current_cycle.end)
-        war_label = "ЛВК" if war.war_type == WarType.CWL else "КВ"
-        text = (
-            f"🚨 Нарушение атаки\n"
-            f"Игрок: {attack.attacker_name} {attack.attacker_tag}\n"
-            f"Война: {war_label}\n"
-            f"Время фиксации: {attack.observed_at:%Y-%m-%d %H:%M:%S UTC}\n"
-            f"Нарушение №{violation_number}\n"
-            f"Цель: {attack.defender_name} {attack.defender_tag}\n"
-            f"Позиция игрока: {attack.attacker_position}\n"
-            f"Позиция цели: {attack.defender_position}\n"
-            f"Причина: {violation.reason_text}"
-        )
-        await self.notifier.notify_once(
-            event_key=f"violation:{attack.id}",
-            event_type="violation",
-            text=text,
-            now=attack.observed_at,
-        )
-        logger.info("Violation recorded for attack %s", attack.id)
+            current_cycle = await self.period_service.current_cycle(attack.observed_at)
+            violation_number = await self.stats_repo.violation_count_for_player(attack.attacker_tag, current_cycle.start, current_cycle.end)
+            war_label = "ЛВК" if war.war_type == WarType.CWL else "КВ"
+            text = (
+                f"🚨 Нарушение атаки\n"
+                f"Игрок: {attack.attacker_name} {attack.attacker_tag}\n"
+                f"Война: {war_label}\n"
+                f"Время фиксации: {attack.observed_at:%Y-%m-%d %H:%M:%S UTC}\n"
+                f"Нарушение №{violation_number}\n"
+                f"Цель: {attack.defender_name} {attack.defender_tag}\n"
+                f"Позиция игрока: {attack.attacker_position}\n"
+                f"Позиция цели: {attack.defender_position}\n"
+                f"Причина: {violation.reason_text}"
+            )
+            await self.notifier.notify_once(
+                event_key=f"violation:{attack.id}",
+                event_type="violation",
+                text=text,
+                now=attack.observed_at,
+            )
+            logger.info("Violation recorded for attack %s", attack.id)
+            return
+
+        violation.code = decision.code
+        violation.reason_text = decision.reason_text
+        violation.player_position = attack.attacker_position
+        violation.target_position = attack.defender_position
+        violation.detected_at = attack.observed_at
+        await self.session.flush()
 
     def _war_uid(self, dto: WarDTO, own_tag: str, enemy_tag: str) -> str:
         base_time = dto.preparation_start_time or dto.start_time or dto.end_time or "unknown"
