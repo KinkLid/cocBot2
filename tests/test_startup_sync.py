@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import func, select
 
-from app.models import PlayerAccount, ReturnEvent
+from app.models import PlayerAccount, ReturnEvent, War
 from app.services.startup_sync import StartupSyncService
 from tests.fakes import FakeSender
-from tests.helpers import make_clan_member
+from tests.helpers import make_clan_member, make_regular_war
 
 
 @pytest.mark.asyncio
@@ -99,6 +100,35 @@ async def test_startup_sync_partial_failure_is_logged_and_predictable(app_contex
     assert report.clan_sync_ok is True
     assert report.war_sync_ok is False
     assert "Startup war sync failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_startup_war_sync_handles_naive_war_start_time_without_crash(session, app_context, fake_clash_client):
+    fake_clash_client.members = [make_clan_member("#P2", "Alpha", 1)]
+    start = datetime(2026, 4, 1, 10, 0, tzinfo=UTC)
+    fake_clash_client.current_war = make_regular_war(start=start, attacker_position=12, defender_position=5)
+
+    sender = FakeSender()
+    service = StartupSyncService(app_context, sender)
+
+    first_report = await service.run()
+    assert first_report.war_sync_ok is True
+
+    war = await session.scalar(select(War))
+    assert war is not None
+    war.start_time = war.start_time.replace(tzinfo=None)
+    await session.commit()
+
+    fake_clash_client.current_war = make_regular_war(
+        start=start,
+        attack_order=2,
+        attacker_position=12,
+        defender_position=5,
+    )
+
+    second_report = await service.run()
+
+    assert second_report.war_sync_ok is True
 
 
 @pytest.mark.asyncio

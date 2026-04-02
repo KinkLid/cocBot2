@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from app.models.enums import ViolationCode
 
@@ -16,6 +16,12 @@ class ViolationDecision:
 TWELVE_HOURS = timedelta(hours=12)
 
 
+def _normalize_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None or dt.utcoffset() is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
 def evaluate_attack_violation(
     war_start_time: datetime | None,
     attack_seen_at: datetime,
@@ -25,7 +31,10 @@ def evaluate_attack_violation(
     if war_start_time is None:
         return ViolationDecision(violated=False)
 
-    if attack_seen_at >= war_start_time + TWELVE_HOURS:
+    normalized_war_start_time = _normalize_utc(war_start_time)
+    normalized_attack_seen_at = _normalize_utc(attack_seen_at)
+
+    if normalized_attack_seen_at >= normalized_war_start_time + TWELVE_HOURS:
         return ViolationDecision(violated=False)
 
     min_allowed_position = attacker_position
