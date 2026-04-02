@@ -25,6 +25,16 @@ async def test_json_export_for_current_cycle(session, app_yaml_config, tmp_path:
     payload = await service.export_to_dict(datetime(2026, 4, 1, 0, tzinfo=UTC), datetime(2026, 4, 2, 23, tzinfo=UTC))
     assert payload["clan"]["tag"] == "#CLAN"
     assert payload["players"][0]["participation"]
+    cwl_attacks = [
+        attack
+        for player in payload["players"]
+        for war in player["participation"]
+        if war["war_type"] == "cwl"
+        for attack in war["attacks"]
+    ]
+    assert cwl_attacks
+    assert cwl_attacks[0]["attacker_position"] == 2
+    assert cwl_attacks[0]["defender_position"] == 2
 
 
 @pytest.mark.asyncio

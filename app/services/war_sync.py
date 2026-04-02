@@ -102,43 +102,58 @@ class WarSyncService:
             )
         )
 
-        participant_map: dict[str, tuple[int, int, str, int | None]] = {}
+        participant_map: dict[str, WarParticipant] = {}
         participants: list[WarParticipant] = []
         for is_own, side in ((True, own_side), (False, enemy_side)):
             for member in side.members:
                 player = await self.players.get_by_tag(member.tag) if is_own else None
-                participant_map[member.tag] = (member.map_position, member.town_hall_level, member.name, player.id if player else None)
-                participants.append(
-                    WarParticipant(
-                        war_id=war.id,
-                        player_id=player.id if player else None,
-                        player_tag=member.tag,
-                        name=member.name,
-                        map_position=member.map_position,
-                        town_hall=member.town_hall_level,
-                        is_own_clan=is_own,
-                    )
+                participant = WarParticipant(
+                    war_id=war.id,
+                    player_id=player.id if player else None,
+                    player_tag=member.tag,
+                    name=member.name,
+                    map_position=member.map_position,
+                    town_hall=member.town_hall_level,
+                    is_own_clan=is_own,
                 )
+                participant_map[member.tag] = participant
+                participants.append(participant)
         await self.wars.replace_participants(war.id, participants)
 
-        own_members_by_tag = {member.tag: member for member in own_side.members}
         for member in own_side.members:
             attacker_player = await self.players.get_by_tag(member.tag)
             attacker_player_id = attacker_player.id if attacker_player else None
             for attack_dto in member.attacks:
+                attacker_participant = participant_map.get(member.tag)
+                defender_participant = participant_map.get(attack_dto.defender_tag)
+
+                attacker_position = attacker_participant.map_position if attacker_participant else member.map_position
+                attacker_th = attacker_participant.town_hall if attacker_participant else member.town_hall_level
+                attacker_name = attacker_participant.name if attacker_participant else member.name
+                defender_position = defender_participant.map_position if defender_participant else 0
+                defender_th = defender_participant.town_hall if defender_participant else 0
+                defender_name = defender_participant.name if defender_participant else attack_dto.defender_tag
+
                 existing_attack = await self.wars.get_attack(war.id, member.tag, attack_dto.defender_tag, attack_dto.order)
                 if existing_attack is not None:
+                    existing_attack.attacker_name = attacker_name
+                    existing_attack.attacker_position = attacker_position
+                    existing_attack.attacker_town_hall = attacker_th
+                    existing_attack.defender_name = defender_name
+                    existing_attack.defender_position = defender_position
+                    existing_attack.defender_town_hall = defender_th
+                    existing_attack.stars = attack_dto.stars
+                    existing_attack.destruction = attack_dto.destruction_percentage
                     continue
-                defender_position, defender_th, defender_name, _ = participant_map.get(attack_dto.defender_tag, (0, 0, attack_dto.defender_tag, None))
                 observed_at = utcnow()
                 attack = await self.wars.add_attack(
                     Attack(
                         war_id=war.id,
                         attacker_player_id=attacker_player_id,
                         attacker_tag=member.tag,
-                        attacker_name=member.name,
-                        attacker_position=member.map_position,
-                        attacker_town_hall=member.town_hall_level,
+                        attacker_name=attacker_name,
+                        attacker_position=attacker_position,
+                        attacker_town_hall=attacker_th,
                         defender_tag=attack_dto.defender_tag,
                         defender_name=defender_name,
                         defender_position=defender_position,
