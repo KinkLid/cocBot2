@@ -72,6 +72,10 @@ class WarRepository:
         await self.session.flush()
         return violation
 
+    async def delete_violation(self, violation: Violation) -> None:
+        await self.session.delete(violation)
+        await self.session.flush()
+
     async def upsert_cycle_boundary(self, source_key: str, boundary_at, description: str) -> CycleBoundary:
         result = await self.session.execute(select(CycleBoundary).where(CycleBoundary.source_key == source_key))
         existing = result.scalar_one_or_none()

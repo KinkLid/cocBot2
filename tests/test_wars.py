@@ -318,6 +318,154 @@ async def test_cwl_violation_is_calculated_from_war_roster_positions(session, fa
     violation = await session.scalar(select(Violation))
     assert violation is not None
     assert violation.player_position == 20
+
+
+@pytest.mark.asyncio
+async def test_cwl_violation_uses_positions_from_current_war_roster_only(session, fake_clash_client, app_yaml_config, monkeypatch):
+    fake_clash_client.members = [make_clan_member("#P2", "Alpha", 1)]
+    notifier = AdminNotifier(session, app_yaml_config, FakeSender())
+    await ClanSyncService(session, fake_clash_client, app_yaml_config, notifier).sync_members()
+
+    start = datetime(2026, 4, 2, 10, 0, tzinfo=UTC)
+    monkeypatch.setattr("app.services.war_sync.utcnow", lambda: start + timedelta(hours=1))
+    fake_clash_client.cwl_group = make_cwl_group("2026-04", ["#CWL1"])
+    fake_clash_client.cwl_wars["#CWL1"] = make_cwl_war(start=start, attacker_position=22, defender_position=22, round_index=0)
+
+    await WarSyncService(session, fake_clash_client, app_yaml_config, notifier).sync_all()
+
+    attack = await session.scalar(select(Attack))
+    assert attack is not None
+    assert attack.attacker_position == 22
+    assert attack.defender_position == 22
+    assert await session.scalar(select(Violation)) is None
+
+
+@pytest.mark.asyncio
+async def test_existing_attack_violation_is_recomputed_when_positions_change(session, fake_clash_client, app_yaml_config, monkeypatch):
+    fake_clash_client.members = [make_clan_member("#P2", "Alpha", 1)]
+    notifier = AdminNotifier(session, app_yaml_config, FakeSender())
+    await ClanSyncService(session, fake_clash_client, app_yaml_config, notifier).sync_members()
+
+    start = datetime(2026, 4, 2, 10, 0, tzinfo=UTC)
+    monkeypatch.setattr("app.services.war_sync.utcnow", lambda: start + timedelta(hours=1))
+    fake_clash_client.cwl_group = make_cwl_group("2026-04", ["#CWL1"])
+    fake_clash_client.cwl_wars["#CWL1"] = make_cwl_war(start=start, attacker_position=22, defender_position=5, round_index=0)
+    service = WarSyncService(session, fake_clash_client, app_yaml_config, notifier)
+
+    await service.sync_all()
+    assert await session.scalar(select(func.count(Violation.id))) == 1
+
+    fake_clash_client.cwl_wars["#CWL1"] = make_cwl_war(start=start, attacker_position=22, defender_position=22, round_index=0)
+    await service.sync_all()
+
+    assert await session.scalar(select(func.count(Violation.id))) == 0
+
+
+@pytest.mark.asyncio
+async def test_existing_attack_violation_is_updated_not_left_stale(session, fake_clash_client, app_yaml_config, monkeypatch):
+    fake_clash_client.members = [make_clan_member("#P2", "Alpha", 1)]
+    notifier = AdminNotifier(session, app_yaml_config, FakeSender())
+    await ClanSyncService(session, fake_clash_client, app_yaml_config, notifier).sync_members()
+
+    start = datetime(2026, 4, 2, 10, 0, tzinfo=UTC)
+    monkeypatch.setattr("app.services.war_sync.utcnow", lambda: start + timedelta(hours=1))
+    fake_clash_client.cwl_group = make_cwl_group("2026-04", ["#CWL1"])
+    fake_clash_client.cwl_wars["#CWL1"] = make_cwl_war(start=start, attacker_position=22, defender_position=5, round_index=0)
+    service = WarSyncService(session, fake_clash_client, app_yaml_config, notifier)
+
+    await service.sync_all()
+    violation = await session.scalar(select(Violation))
+    assert violation is not None
+    assert violation.target_position == 5
+
+    fake_clash_client.cwl_wars["#CWL1"] = make_cwl_war(start=start, attacker_position=30, defender_position=1, round_index=0)
+    await service.sync_all()
+
+    updated_violation = await session.scalar(select(Violation))
+    assert updated_violation is not None
+    assert updated_violation.player_position == 30
+    assert updated_violation.target_position == 1
+
+
+@pytest.mark.asyncio
+async def test_cwl_does_not_use_player_current_clan_rank_for_violation(session, fake_clash_client, app_yaml_config, monkeypatch):
+    fake_clash_client.members = [make_clan_member("#P2", "Alpha", 1)]
+    notifier = AdminNotifier(session, app_yaml_config, FakeSender())
+    await ClanSyncService(session, fake_clash_client, app_yaml_config, notifier).sync_members()
+
+    start = datetime(2026, 4, 2, 10, 0, tzinfo=UTC)
+    monkeypatch.setattr("app.services.war_sync.utcnow", lambda: start + timedelta(hours=1))
+    fake_clash_client.cwl_group = make_cwl_group("2026-04", ["#CWL1"])
+    fake_clash_client.cwl_wars["#CWL1"] = make_cwl_war(start=start, attacker_position=22, defender_position=22, round_index=0)
+
+    await WarSyncService(session, fake_clash_client, app_yaml_config, notifier).sync_all()
+
+    attack = await session.scalar(select(Attack))
+    assert attack is not None
+    assert attack.attacker_position == 22
+    assert await session.scalar(select(Violation)) is None
+
+
+@pytest.mark.asyncio
+async def test_no_violation_notification_for_mirror_hit_in_cwl(session, fake_clash_client, app_yaml_config, monkeypatch):
+    fake_clash_client.members = [make_clan_member("#P2", "Alpha", 1)]
+    sender = FakeSender()
+    notifier = AdminNotifier(session, app_yaml_config, sender)
+    await ClanSyncService(session, fake_clash_client, app_yaml_config, notifier).sync_members()
+
+    start = datetime(2026, 4, 2, 10, 0, tzinfo=UTC)
+    monkeypatch.setattr("app.services.war_sync.utcnow", lambda: start + timedelta(hours=1))
+    fake_clash_client.cwl_group = make_cwl_group("2026-04", ["#CWL1"])
+    fake_clash_client.cwl_wars["#CWL1"] = make_cwl_war(start=start, attacker_position=22, defender_position=22, round_index=0)
+
+    await WarSyncService(session, fake_clash_client, app_yaml_config, notifier).sync_all()
+
+    assert await session.scalar(select(func.count(Violation.id))) == 0
+    assert len(sender.sent) == 0
+
+
+@pytest.mark.asyncio
+async def test_missing_enemy_roster_member_does_not_create_false_violation(session, fake_clash_client, app_yaml_config, monkeypatch, caplog):
+    fake_clash_client.members = [make_clan_member("#P2", "Alpha", 1)]
+    sender = FakeSender()
+    notifier = AdminNotifier(session, app_yaml_config, sender)
+    await ClanSyncService(session, fake_clash_client, app_yaml_config, notifier).sync_members()
+
+    start = datetime(2026, 4, 2, 10, 0, tzinfo=UTC)
+    monkeypatch.setattr("app.services.war_sync.utcnow", lambda: start + timedelta(hours=1))
+    fake_clash_client.cwl_group = make_cwl_group("2026-04", ["#CWL1"])
+    war_dto = make_cwl_war(start=start, attacker_position=22, defender_position=5, round_index=0)
+    war_dto.clan.members[0].attacks[0].defender_tag = "#MISSING"
+    fake_clash_client.cwl_wars["#CWL1"] = war_dto
+
+    caplog.set_level("WARNING")
+    await WarSyncService(session, fake_clash_client, app_yaml_config, notifier).sync_all()
+
+    assert "Cannot build attack snapshot from war roster" in caplog.text
+    assert await session.scalar(select(func.count(Attack.id))) == 0
+    assert await session.scalar(select(func.count(Violation.id))) == 0
+    assert len(sender.sent) == 0
+
+
+@pytest.mark.asyncio
+async def test_regular_war_behavior_not_regressed(session, fake_clash_client, app_yaml_config, monkeypatch):
+    fake_clash_client.members = [make_clan_member("#P2", "Alpha", 1)]
+    sender = FakeSender()
+    notifier = AdminNotifier(session, app_yaml_config, sender)
+    await ClanSyncService(session, fake_clash_client, app_yaml_config, notifier).sync_members()
+
+    start = datetime(2026, 4, 1, 10, 0, tzinfo=UTC)
+    monkeypatch.setattr("app.services.war_sync.utcnow", lambda: start + timedelta(hours=1))
+    fake_clash_client.current_war = make_regular_war(start=start, attacker_position=12, defender_position=5)
+
+    await WarSyncService(session, fake_clash_client, app_yaml_config, notifier).sync_all()
+
+    attack = await session.scalar(select(Attack))
+    violation = await session.scalar(select(Violation))
+    assert attack is not None
+    assert attack.attacker_position == 12
+    assert attack.defender_position == 5
+    assert violation is not None
     assert violation.target_position == 5
 
 
