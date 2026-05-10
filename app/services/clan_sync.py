@@ -9,6 +9,7 @@ from app.config.settings import AppYamlConfig
 from app.models import DepartedPlayerArchive, ReturnEvent
 from app.repositories.player_account import PlayerAccountRepository
 from app.services.notifications import AdminNotifier
+from app.services.donations import DonationService
 from app.services.period import PeriodService
 from app.utils.time import utcnow
 
@@ -29,6 +30,7 @@ class ClanSyncService:
         self.notifier = notifier
         self.players = PlayerAccountRepository(session)
         self.period_service = PeriodService(session)
+        self.donations = DonationService(session, config)
 
     async def sync_members(self) -> int:
         now = utcnow()
@@ -37,6 +39,7 @@ class ClanSyncService:
         current_tags = {member.tag for member in members}
 
         for member in members:
+            profile = await self.clash_client.get_player(member.tag)
             existing = await self.players.get_by_tag(member.tag)
             returned_from_archive = await self.session.scalar(
                 select(DepartedPlayerArchive).where(DepartedPlayerArchive.player_tag == member.tag)
@@ -54,6 +57,7 @@ class ClanSyncService:
                 in_clan=True,
             )
             await self.players.open_or_create_membership(player.id, self.config.main_clan_tag, now)
+            await self.donations.record_snapshot(player_tag=member.tag, player_id=player.id, clan_tag=self.config.main_clan_tag, donations=profile.donations, donations_received=profile.donations_received)
 
             if returned_from_archive is not None or was_absent:
                 was_purged = returned_from_archive is not None

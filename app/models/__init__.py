@@ -6,6 +6,7 @@ from app.models.cycle_boundary import CycleBoundary
 from app.models.departed_player_archive import DepartedPlayerArchive
 from app.models.enums import PeriodKind, ViolationCode, WarState, WarType
 from app.models.player_account import PlayerAccount
+from app.models.player_donation_snapshot import PlayerDonationSnapshot
 from app.models.return_event import ReturnEvent
 from app.models.telegram_player_link import TelegramPlayerLink
 from app.models.telegram_user import TelegramUser
@@ -21,6 +22,7 @@ __all__ = [
     "DepartedPlayerArchive",
     "PeriodKind",
     "PlayerAccount",
+    "PlayerDonationSnapshot",
     "ReturnEvent",
     "TelegramPlayerLink",
     "TelegramUser",

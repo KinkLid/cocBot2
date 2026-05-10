@@ -85,6 +85,16 @@ class StatsService:
         text = "\n\n".join(self.format_player_card(row, period_start.date().isoformat(), period_end.date().isoformat()) for row in dto_rows)
         return FormattedStats(text=text, rows=dto_rows)
 
+    def format_compact_players_by_clan_order(self, rows: list[PlayerStatsDTO]) -> str:
+        return "\n".join(f"{idx}. {row.player_name}" for idx, row in enumerate(rows, 1))
+
+    def format_compact_players_by_stars(self, rows: list[PlayerStatsDTO]) -> str:
+        return "\n".join(f"{idx}. {row.player_name} — {row.stars} ⭐" for idx, row in enumerate(rows, 1))
+
+    def format_compact_players_by_place(self, rows: list[PlayerStatsDTO]) -> str:
+        ordered = sorted(rows, key=lambda r: r.place)
+        return "\n".join(f"{idx}. {row.player_name}" for idx, row in enumerate(ordered, 1))
+
     def format_player_card(self, row: PlayerStatsDTO, period_start: str, period_end: str) -> str:
         tg_line = (
             f"└ 👤 @{row.telegram_username} • 🆔 {row.telegram_id} • 🗓 {row.registered_at:%Y-%m-%d %H:%M}"
