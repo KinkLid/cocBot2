@@ -120,6 +120,25 @@ journalctl -u cocbot -f
 systemctl restart cocbot
 ```
 
+
+## Recovery Telegram-привязок из JSON-экспорта
+
+Если потерялась SQLite-база (или ее часть), можно восстановить только пользовательские привязки (`telegram_users`, `player_accounts`, `telegram_player_links`) из JSON-экспорта текущего цикла.
+
+Dry-run (только расчет изменений, без записи в БД):
+
+```bash
+python scripts/recover_links_from_export.py /path/to/current_cycle_export.json --dry-run
+```
+
+Реальное восстановление (upsert/reconcile без очистки таблиц):
+
+```bash
+python scripts/recover_links_from_export.py /path/to/current_cycle_export.json
+```
+
+Скрипт идемпотентный: повторный запуск не создает дубли, пропускает игроков без `telegram_id`, логирует конфликты существующих связей и не удаляет старые данные.
+
 ## Тесты
 
 ```bash
