@@ -104,7 +104,9 @@ chmod +x scripts/deploy_remote.sh
 ./scripts/update_from_git.sh
 ```
 
-Скрипт автоматически делает `git fetch`, `git pull --ff-only` и затем повторно запускает полный server-side deploy (`venv`, зависимости, миграции, systemd restart).
+Скрипт автоматически делает `git fetch`, затем принудительно синхронизирует рабочую копию с `origin/<текущая_ветка>` через `git reset --hard` и `git clean -fd`, после чего запускает полный server-side deploy (`venv`, зависимости, миграции, systemd restart).
+
+> Важно: локальные незакоммиченные изменения в репозитории на сервере будут удалены.
 
 ### Проверка статуса и управление
 
