@@ -40,8 +40,5 @@ git fetch --all --prune
 echo "[update_from_git] Resetting local branch to origin/${CURRENT_BRANCH}"
 git reset --hard "origin/${CURRENT_BRANCH}"
 
-echo "[update_from_git] Cleaning untracked files"
-git clean -fd
-
 chmod +x scripts/install_on_server.sh
 bash scripts/install_on_server.sh "${PROJECT_DIR}"

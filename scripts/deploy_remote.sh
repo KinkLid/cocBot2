@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+
 usage() {
   cat <<USAGE
 Usage: $0 <ssh_target> <remote_project_dir>
@@ -54,7 +57,7 @@ if [[ "${TRANSFER_TOOL}" == "rsync" ]]; then
     --exclude 'data' \
     --exclude 'exports' \
     --exclude '.DS_Store' \
-    ./ "${TARGET}:${REMOTE_DIR}/"
+    "${PROJECT_ROOT}/" "${TARGET}:${REMOTE_DIR}/"
 else
   echo "[deploy_remote] rsync not found, using tar + scp fallback"
   TMP_ARCHIVE="$(mktemp -u cocbot_deploy_XXXXXX.tar.gz)"
@@ -71,7 +74,7 @@ else
     --exclude='data' \
     --exclude='exports' \
     --exclude='.DS_Store' \
-    -czf "${TMP_ARCHIVE}" .
+    -czf "${TMP_ARCHIVE}" -C "${PROJECT_ROOT}" .
 
   scp "${TMP_ARCHIVE}" "${TARGET}:${REMOTE_DIR}/.deploy.tar.gz"
   ssh "${TARGET}" "cd '${REMOTE_DIR}' && tar -xzf .deploy.tar.gz && rm -f .deploy.tar.gz"
