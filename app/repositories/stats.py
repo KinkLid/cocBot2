@@ -13,6 +13,7 @@ from app.models.enums import WarType
 
 @dataclass(slots=True)
 class AggregatedStatsRow:
+    player_id: int
     player_tag: str
     player_name: str
     town_hall: int
@@ -82,6 +83,7 @@ class StatsRepository:
 
         stmt = (
             select(
+                PlayerAccount.id,
                 PlayerAccount.player_tag,
                 PlayerAccount.name,
                 PlayerAccount.town_hall,
@@ -108,20 +110,21 @@ class StatsRepository:
         rows = (await self.session.execute(stmt)).all()
         dedup: dict[str, AggregatedStatsRow] = {}
         for row in rows:
-            if row[0] in dedup:
+            if row[1] in dedup:
                 continue
-            dedup[row[0]] = AggregatedStatsRow(
-                player_tag=row[0],
-                player_name=row[1],
-                town_hall=row[2],
-                telegram_id=row[3],
-                telegram_username=row[4],
-                registered_at=row[5],
-                clan_rank=row[6],
-                wars=row[7],
-                attacks=row[8],
-                stars=row[9],
-                violations=row[10],
+            dedup[row[1]] = AggregatedStatsRow(
+                player_id=row[0],
+                player_tag=row[1],
+                player_name=row[2],
+                town_hall=row[3],
+                telegram_id=row[4],
+                telegram_username=row[5],
+                registered_at=row[6],
+                clan_rank=row[7],
+                wars=row[8],
+                attacks=row[9],
+                stars=row[10],
+                violations=row[11],
             )
         return list(dedup.values())
 

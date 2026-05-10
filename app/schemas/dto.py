@@ -20,6 +20,8 @@ class PlayerProfileDTO(BaseModel):
     tag: str
     name: str
     town_hall: int = Field(default=1, alias="townHallLevel")
+    donations: int = 0
+    donations_received: int = Field(default=0, alias="donationsReceived")
 
     model_config = {"populate_by_name": True}
 

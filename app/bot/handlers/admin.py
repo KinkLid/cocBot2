@@ -10,6 +10,7 @@ from app.bot.states.chat_link import ChatLinkStates
 from app.container import AppContext
 from app.services.clan_chat import ClanChatService
 from app.services.dev_contribution import DevContributionService
+from app.services.donations import DonationService
 from app.services.export import ExportService
 from app.services.period import PeriodService
 from app.services.stats import StatsService
@@ -42,8 +43,10 @@ async def admin_players_sort(callback: CallbackQuery, app_context: AppContext) -
     sort_by = callback.data.split(":", 1)[1]
     async with app_context.session_maker() as session:
         period = await PeriodService(session).current_cycle()
-        stats = await StatsService(session, app_context.config).clan_stats(period.start, period.end, sort_by=sort_by)
-    await edit_or_send_long_message(callback.message, stats.text or "Нет данных")
+        service = StatsService(session, app_context.config)
+        stats = await service.clan_stats(period.start, period.end, sort_by=sort_by)
+        text = service.format_compact_players_by_stars(stats.rows) if sort_by == "stars" else (service.format_compact_players_by_place(stats.rows) if sort_by == "place" else service.format_compact_players_by_clan_order(stats.rows))
+    await edit_or_send_long_message(callback.message, text or "Нет данных")
     await callback.answer()
 
 
@@ -74,7 +77,7 @@ async def export_json(message: Message, app_context: AppContext) -> None:
     await message.answer_document(FSInputFile(path), caption="📦 JSON за текущий цикл")
 
 
-@router.message(F.text == "🧪 Dev-вклад")
+@router.message(F.text == "🏆 Общий вклад")
 async def dev_contribution(message: Message, app_context: AppContext) -> None:
     try:
         _ensure_admin(app_context, message.from_user.id)
@@ -83,7 +86,9 @@ async def dev_contribution(message: Message, app_context: AppContext) -> None:
         return
     async with app_context.session_maker() as session:
         period = await PeriodService(session).current_cycle()
-        text = await DevContributionService(session, app_context.config).report(period.start, period.end)
+        service = DevContributionService(session, app_context.config)
+        ranking = await service.build_contribution_ranking(period)
+        text = service.format_contribution_ranking(ranking)
     await send_long_message(message, text)
 
 
@@ -128,3 +133,17 @@ async def download_log_file(message: Message, app_context: AppContext) -> None:
     if not path.exists():
         path.write_text("", encoding="utf-8")
     await message.answer_document(FSInputFile(path), caption="🗂 Полный лог-файл")
+
+
+@router.message(F.text == "🧪 Dev-донаты")
+async def dev_donations(message: Message, app_context: AppContext) -> None:
+    try:
+        _ensure_admin(app_context, message.from_user.id)
+    except PermissionError:
+        await message.answer("⛔ Недостаточно прав")
+        return
+    async with app_context.session_maker() as session:
+        service = DonationService(session, app_context.config)
+        ranking = await service.build_current_cycle_donation_ranking()
+        text = service.format_donation_ranking(ranking)
+    await send_long_message(message, text)
