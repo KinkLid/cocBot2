@@ -158,6 +158,19 @@ class StatsRepository:
         )
         return list((await self.session.execute(stmt)).all())
 
+    async def enemy_participation_rows_for_wars(self, war_ids: list[int]) -> list:
+        if not war_ids:
+            return []
+        stmt = (
+            select(WarParticipant)
+            .where(
+                WarParticipant.war_id.in_(war_ids),
+                WarParticipant.is_own_clan.is_(False),
+            )
+            .order_by(WarParticipant.war_id.asc(), WarParticipant.map_position.asc())
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def violation_count_for_player(self, player_tag: str, period_start: datetime, period_end: datetime) -> int:
         stmt = select(func.count(Violation.id)).where(
             Violation.player_tag == player_tag,
