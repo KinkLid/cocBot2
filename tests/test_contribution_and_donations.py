@@ -177,3 +177,27 @@ def test_dev_contribution_handler_always_answers(app_yaml_config, monkeypatch):
     asyncio.run(dev_contribution(message, _build_test_app_context(app_yaml_config)))
 
     assert message.answer.await_count == 1
+
+
+def test_contribution_ranking_tie_break_is_stable(app_yaml_config, monkeypatch):
+    player_b = SimpleNamespace(player_tag="#B", player_name="Bravo", wars=1, player_id=1)
+    player_a = SimpleNamespace(player_tag="#A", player_name="Alpha", wars=1, player_id=2)
+    war = SimpleNamespace(id=99, war_type=contribution_module.WarType.REGULAR)
+
+    monkeypatch.setattr(contribution_module.StatsRepository, "aggregated_player_stats", AsyncMock(return_value=[player_b, player_a]))
+    monkeypatch.setattr(
+        contribution_module.StatsRepository,
+        "attack_rows_for_players",
+        AsyncMock(
+            return_value=[
+                (SimpleNamespace(attacker_tag="#A", stars=2, destruction=80, attacker_position=1, defender_position=1), war, None),
+                (SimpleNamespace(attacker_tag="#B", stars=2, destruction=80, attacker_position=1, defender_position=1), war, None),
+            ]
+        ),
+    )
+    monkeypatch.setattr(contribution_module.StatsRepository, "participation_rows_for_players", AsyncMock(return_value=[]))
+    monkeypatch.setattr(contribution_module.StatsRepository, "enemy_participation_rows_for_wars", AsyncMock(return_value=[]))
+    monkeypatch.setattr(DevContributionService, "is_newcomer", AsyncMock(return_value=False))
+
+    ranking = asyncio.run(DevContributionService(object(), app_yaml_config).build_contribution_ranking(SimpleNamespace(start=datetime.now(UTC)-timedelta(days=1), end=datetime.now(UTC))))
+    assert [row.player_tag for row in ranking] == ["#A", "#B"]

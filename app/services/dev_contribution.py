@@ -110,7 +110,7 @@ class DevContributionService:
         for row in stats_rows:
             newcomer = await self.is_newcomer(row.player_id, round(by_tag.get(row.player_tag, 0.0), 2), row.wars) if hasattr(row, "player_id") else False
             ranking.append(ContributionRankingRow(row.player_tag, row.player_name, row.wars, round(by_tag.get(row.player_tag, 0.0), 2), newcomer))
-        return sorted(ranking, key=lambda x: x.score, reverse=True)
+        return sorted(ranking, key=lambda x: (-x.score, x.player_name.casefold(), x.player_tag))
 
     def format_contribution_ranking(self, ranking: list[ContributionRankingRow]) -> str:
         if not ranking:
