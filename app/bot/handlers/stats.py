@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 GENERIC_STATS_ERROR = "⚠️ Не удалось показать статистику. Попробуйте позже."
 CYCLE_DATA_ERROR = "⚠️ Не удалось построить статистику: недостаточно данных по циклам ЛВК."
+PREVIOUS_CYCLE_UNAVAILABLE_ERROR = "⚠️ Прошлый цикл пока недоступен: в базе еще недостаточно границ циклов ЛВК."
 PLAYER_DATA_ERROR = "⚠️ Не удалось построить статистику: игрок сейчас не состоит в клане или данные еще не синхронизированы."
 BAD_DATE_FORMAT_ERROR = "⚠️ Неверный формат даты. Используйте YYYY-MM-DD."
 BAD_DATE_ORDER_ERROR = "⚠️ Дата конца периода не может быть раньше даты начала."
@@ -133,7 +134,11 @@ async def _send_my_stats(message: Message, state: FSMContext, mode: str, app_con
         await send_long_message(message, text)
     except ValueError as exc:
         await state.clear()
-        if "Недостаточно данных" in str(exc):
+        error_text = str(exc)
+        if "Прошлый цикл недоступен" in error_text:
+            await message.answer(PREVIOUS_CYCLE_UNAVAILABLE_ERROR)
+            return
+        if "Недостаточно данных" in error_text:
             await message.answer(CYCLE_DATA_ERROR)
             return
         if "Дата конца периода меньше даты начала" in str(exc):
