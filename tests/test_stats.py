@@ -8,6 +8,7 @@ from app.models import Attack, CycleBoundary, PlayerAccount, TelegramPlayerLink,
 from app.models.enums import ViolationCode, WarState, WarType
 from app.services.period import PeriodService
 from app.services.stats import StatsService
+from app.services.dev_contribution import ContributionDataUnavailableError, ContributionRankingRow
 
 
 async def seed_stats_data(session) -> None:
@@ -204,7 +205,7 @@ async def test_only_current_clan_members_are_included_in_stats(session, app_yaml
 
 
 @pytest.mark.asyncio
-async def test_player_place_in_clan_is_calculated_by_stars(session, app_yaml_config):
+async def test_players_list_sort_by_stars_is_unchanged(session, app_yaml_config):
     await seed_stats_data(session)
     stats = await StatsService(session, app_yaml_config).clan_stats(datetime(2026, 4, 1, 0, tzinfo=UTC), datetime(2026, 4, 2, 23, tzinfo=UTC), sort_by="stars")
     assert stats.rows[0].player_tag == "#P2"
@@ -218,3 +219,50 @@ async def test_admin_list_default_sort_uses_current_clan_order(session, app_yaml
     await seed_stats_data(session)
     stats = await StatsService(session, app_yaml_config).clan_stats(datetime(2026, 4, 1, 0, tzinfo=UTC), datetime(2026, 4, 2, 23, tzinfo=UTC))
     assert [row.player_tag for row in stats.rows] == ["#P8", "#P2"]
+
+
+@pytest.mark.asyncio
+async def test_player_stats_place_uses_contribution_not_stars(session, app_yaml_config, monkeypatch):
+    await seed_stats_data(session)
+
+    async def fake_ranking(*_args, **_kwargs):
+        return [
+            ContributionRankingRow(player_tag="#P8", player_name="Bravo", wars=1, score=50.0, newcomer=False),
+            ContributionRankingRow(player_tag="#P2", player_name="Alpha", wars=1, score=10.0, newcomer=False),
+        ]
+
+    monkeypatch.setattr("app.services.dev_contribution.DevContributionService.build_contribution_ranking", fake_ranking)
+
+    stats = await StatsService(session, app_yaml_config).player_stats(datetime(2026, 4, 1, 0, tzinfo=UTC), datetime(2026, 4, 2, 23, tzinfo=UTC), "#P8")
+    assert stats.place == 1
+
+
+@pytest.mark.asyncio
+async def test_player_stats_place_matches_contribution_ranking(session, app_yaml_config, monkeypatch):
+    await seed_stats_data(session)
+
+    async def fake_ranking(*_args, **_kwargs):
+        return [
+            ContributionRankingRow(player_tag="#P8", player_name="Bravo", wars=1, score=50.0, newcomer=False),
+            ContributionRankingRow(player_tag="#P2", player_name="Alpha", wars=1, score=10.0, newcomer=False),
+        ]
+
+    monkeypatch.setattr("app.services.dev_contribution.DevContributionService.build_contribution_ranking", fake_ranking)
+
+    service = StatsService(session, app_yaml_config)
+    p8 = await service.player_stats(datetime(2026, 4, 1, 0, tzinfo=UTC), datetime(2026, 4, 2, 23, tzinfo=UTC), "#P8")
+    p2 = await service.player_stats(datetime(2026, 4, 1, 0, tzinfo=UTC), datetime(2026, 4, 2, 23, tzinfo=UTC), "#P2")
+    assert (p8.place, p2.place) == (1, 2)
+
+
+@pytest.mark.asyncio
+async def test_player_stats_handles_missing_contribution_data(session, app_yaml_config, monkeypatch):
+    await seed_stats_data(session)
+
+    async def fail_ranking(*_args, **_kwargs):
+        raise ContributionDataUnavailableError("no data")
+
+    monkeypatch.setattr("app.services.dev_contribution.DevContributionService.build_contribution_ranking", fail_ranking)
+
+    stats = await StatsService(session, app_yaml_config).player_stats(datetime(2026, 4, 1, 0, tzinfo=UTC), datetime(2026, 4, 2, 23, tzinfo=UTC), "#P2")
+    assert stats.place == 0

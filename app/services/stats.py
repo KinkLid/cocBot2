@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,8 +29,7 @@ class StatsService:
             period_end=period_end,
             player_tags=[player_tag],
         )
-        ranked = await self.clan_stats(period_start, period_end)
-        ranking_map = {row.player_tag: row.place for row in ranked.rows}
+        contribution_place = await self.player_contribution_place(period_start, period_end, player_tag)
         if not rows:
             raise ValueError("Игрок сейчас не состоит в клане или отсутствуют данные")
         row = rows[0]
@@ -44,9 +44,23 @@ class StatsService:
             attacks=row.attacks,
             stars=row.stars,
             violations=row.violations,
-            place=ranking_map.get(row.player_tag, 0),
+            place=contribution_place,
             clan_rank=row.clan_rank,
         )
+
+
+    async def player_contribution_place(self, period_start, period_end, player_tag: str) -> int:
+        from app.services.dev_contribution import ContributionDataUnavailableError, DevContributionService
+
+        try:
+            ranking = await DevContributionService(self.session, self.config).build_contribution_ranking(SimpleNamespace(start=period_start, end=period_end))
+        except ContributionDataUnavailableError:
+            return 0
+
+        for idx, row in enumerate(ranking, 1):
+            if row.player_tag == player_tag:
+                return idx
+        return 0
 
     async def clan_stats(self, period_start, period_end, sort_by: str = "clan_order") -> FormattedStats:
         rows = await self.repo.aggregated_player_stats(
