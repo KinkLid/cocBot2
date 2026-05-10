@@ -38,7 +38,7 @@ class PeriodService:
         now = _aware(now)
         previous = [b for b in boundaries if _aware(b.boundary_at) <= now]
         if len(previous) < 2:
-            raise ValueError("Недостаточно данных по ЛВК для прошлого цикла")
+            raise ValueError("Прошлый цикл недоступен: в базе недостаточно границ циклов ЛВК")
         return PeriodRange(start=_aware(previous[-2].boundary_at), end=_aware(previous[-1].boundary_at), label="Прошлый цикл")
 
     def custom_period(self, start: datetime, end: datetime) -> PeriodRange:

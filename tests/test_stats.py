@@ -164,6 +164,12 @@ async def seed_stats_data(session) -> None:
     await session.commit()
 
 
+
+
+@pytest.mark.asyncio
+async def test_previous_cycle_raises_clear_error_with_insufficient_boundaries(session):
+    with pytest.raises(ValueError, match="Прошлый цикл недоступен: в базе недостаточно границ циклов ЛВК"):
+        await PeriodService(session).previous_cycle(datetime(2026, 4, 5, 0, tzinfo=UTC))
 @pytest.mark.asyncio
 async def test_stats_for_current_cycle(session, app_yaml_config):
     await seed_stats_data(session)

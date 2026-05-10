@@ -151,6 +151,8 @@ async def test_choose_period_current_without_cycle_boundaries_returns_error(app_
     await choose_my_stats_period(callback, state, app_context)
 
     assert "недостаточно данных по циклам" in callback.message.answer.await_args.args[0]
+    assert callback.message.answer.await_count == 1
+    assert callback.answer.await_count == 1
     assert state.state is None
 
 
@@ -168,7 +170,10 @@ async def test_choose_period_previous_without_enough_boundaries_returns_error(ap
 
     await choose_my_stats_period(callback, state, app_context)
 
-    assert "недостаточно данных по циклам" in callback.message.answer.await_args.args[0]
+    assert "Прошлый цикл пока недоступен" in callback.message.answer.await_args.args[0]
+    assert callback.message.answer.await_count == 1
+    assert callback.answer.await_count == 1
+    assert state.state is None
 
 
 @pytest.mark.asyncio
