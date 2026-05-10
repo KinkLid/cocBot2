@@ -38,7 +38,7 @@ def calculate_attack_contribution(data: ContributionAttackInput) -> Contribution
 
     score = base_score + (triple_bonus if data.stars == 3 else 0)
     if data.is_above_self_violation:
-        score = -8 if data.stars < 3 else score - 8
+        score = 0 if data.stars < 3 else score
     elif data.is_too_low_violation:
         excess = data.defender_position - (data.attacker_position + 10)
         penalty_base = 8 + 2 * max(excess, 0)
@@ -62,6 +62,13 @@ def calculate_unused_attack_penalty(*, is_cwl: bool, unused_attacks: int, attack
     if unused_attacks >= 1 and len(useful_unattacked) >= 1:
         return -12.0
     return 0.0
+
+
+def calculate_cwl_unused_attack_penalty(*, unused_attack: bool, opponent_positions: list[int], attacked_defender_positions: list[int]) -> float:
+    if not unused_attack:
+        return 0.0
+    unattacked_global = set(opponent_positions) - set(attacked_defender_positions)
+    return -40.0 if unattacked_global else 0.0
 
 
 def calculate_player_contribution(data: ContributionPlayerInput) -> ContributionResult:
