@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+
 usage() {
   cat <<USAGE
 Usage: $0 [project_dir]
@@ -20,7 +23,7 @@ if [[ $# -gt 1 ]]; then
   err "Expected zero or one argument"
 fi
 
-PROJECT_DIR="${1:-$(pwd)}"
+PROJECT_DIR="${1:-${DEFAULT_PROJECT_DIR}}"
 [[ -d "${PROJECT_DIR}" ]] || err "Project directory does not exist: ${PROJECT_DIR}"
 [[ -f "${PROJECT_DIR}/scripts/install_on_server.sh" ]] || err "scripts/install_on_server.sh not found in ${PROJECT_DIR}"
 

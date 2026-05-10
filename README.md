@@ -88,6 +88,8 @@ chmod +x scripts/deploy_remote.sh
 ./scripts/deploy_local.sh
 ```
 
+Скрипт корректно работает даже если запускать его из `scripts/` (например `cd scripts && ./deploy_local.sh`).
+
 Или явно указать путь:
 
 ```bash
