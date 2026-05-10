@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, FSInputFile, Message
@@ -9,13 +11,14 @@ from app.bot.utils.telegram_text import edit_or_send_long_message, send_long_mes
 from app.bot.states.chat_link import ChatLinkStates
 from app.container import AppContext
 from app.services.clan_chat import ClanChatService
-from app.services.dev_contribution import DevContributionService
+from app.services.dev_contribution import ContributionDataUnavailableError, DevContributionService
 from app.services.donations import DonationService
 from app.services.export import ExportService
 from app.services.period import PeriodService
 from app.services.stats import StatsService
 
 router = Router(name="admin")
+logger = logging.getLogger(__name__)
 
 
 def _ensure_admin(app_context: AppContext, telegram_id: int) -> None:
@@ -84,12 +87,18 @@ async def dev_contribution(message: Message, app_context: AppContext) -> None:
     except PermissionError:
         await message.answer("⛔ Недостаточно прав")
         return
-    async with app_context.session_maker() as session:
-        period = await PeriodService(session).current_cycle()
-        service = DevContributionService(session, app_context.config)
-        ranking = await service.build_contribution_ranking(period)
-        text = service.format_contribution_ranking(ranking)
-    await send_long_message(message, text)
+    try:
+        async with app_context.session_maker() as session:
+            period = await PeriodService(session).current_cycle()
+            service = DevContributionService(session, app_context.config)
+            ranking = await service.build_contribution_ranking(period)
+            text = service.format_contribution_ranking(ranking)
+        await send_long_message(message, text)
+    except ContributionDataUnavailableError as exc:
+        await message.answer(str(exc))
+    except Exception:
+        logger.exception("Failed to build dev contribution report")
+        await message.answer("⚠️ Не удалось построить отчет по общему вкладу. Попробуйте позже.")
 
 
 @router.message(F.text == "✏️ Обновить ссылку на чат")
