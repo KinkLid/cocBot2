@@ -63,7 +63,7 @@ chmod +x scripts/deploy_remote.sh
 
 Скрипт автоматически:
 
-1. синхронизирует код на сервер (с исключением `.venv`, `.git`, `logs`, `data` и т.д.)
+1. синхронизирует код на сервер (с `rsync --delete` только для кода, при этом защищает на сервере `.env`, `config.yaml`, `logs/`, `data/`, `exports/`)
 2. создает `.venv`, если нужно
 3. ставит production-зависимости
 4. применяет `alembic upgrade head`
@@ -76,8 +76,12 @@ chmod +x scripts/deploy_remote.sh
 - `${PROJECT_DIR}/.env`
 - `${PROJECT_DIR}/config.yaml`
 
-Если файлов нет, но есть `.env.example`/`config.example.yaml`, они будут скопированы автоматически.
-Существующие `.env` и `config.yaml` не перезаписываются.
+`.env` и `config.yaml` — runtime-конфиги, они не должны храниться в git.
+
+Deploy-скрипт сохраняет серверные `.env` и `config.yaml` (и runtime-директории `logs/`, `data/`, `exports/`), не удаляет их и не перезаписывает при `rsync --delete`.
+
+При самом первом install, если файлов нет, но есть `.env.example`/`config.example.yaml`, они будут скопированы автоматически.
+На повторных deploy/update отсутствие `.env` или `config.yaml` считается ошибкой: скрипт завершится с понятным сообщением и не создаст дефолтный конфиг молча.
 
 
 ### Деплой прямо на сервере (без локального rsync/scp)

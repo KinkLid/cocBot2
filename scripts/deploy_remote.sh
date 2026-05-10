@@ -47,15 +47,22 @@ ssh "${TARGET}" "mkdir -p '${REMOTE_DIR}'"
 if [[ "${TRANSFER_TOOL}" == "rsync" ]]; then
   echo "[deploy_remote] Syncing project with rsync"
   rsync -az --delete \
+    --filter='P /.env' \
+    --filter='P /config.yaml' \
+    --filter='P /logs/***' \
+    --filter='P /data/***' \
+    --filter='P /exports/***' \
+    --exclude '.env' \
+    --exclude 'config.yaml' \
+    --exclude 'logs/' \
+    --exclude 'data/' \
+    --exclude 'exports/' \
     --exclude '.git' \
     --exclude '.venv' \
     --exclude '__pycache__' \
     --exclude '.pytest_cache' \
     --exclude 'htmlcov' \
     --exclude '.mypy_cache' \
-    --exclude 'logs' \
-    --exclude 'data' \
-    --exclude 'exports' \
     --exclude '.DS_Store' \
     "${PROJECT_ROOT}/" "${TARGET}:${REMOTE_DIR}/"
 else
@@ -64,15 +71,17 @@ else
   trap 'rm -f "${TMP_ARCHIVE}"' EXIT
 
   tar \
+    --exclude='.env' \
+    --exclude='config.yaml' \
+    --exclude='logs/' \
+    --exclude='data/' \
+    --exclude='exports/' \
     --exclude='.git' \
     --exclude='.venv' \
     --exclude='__pycache__' \
     --exclude='.pytest_cache' \
     --exclude='htmlcov' \
     --exclude='.mypy_cache' \
-    --exclude='logs' \
-    --exclude='data' \
-    --exclude='exports' \
     --exclude='.DS_Store' \
     -czf "${TMP_ARCHIVE}" -C "${PROJECT_ROOT}" .
 

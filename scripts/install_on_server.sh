@@ -4,6 +4,7 @@ set -Eeuo pipefail
 SERVICE_NAME="cocbot"
 SYSTEMD_TEMPLATE_REL="deploy/systemd/cocbot.service.template"
 SYSTEMD_UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
+INSTALL_STATE_FILE=".install_initialized"
 
 usage() {
   cat <<USAGE
@@ -34,16 +35,29 @@ command -v python3.12 >/dev/null 2>&1 || err "Python 3.12 is required but not fo
 
 mkdir -p logs data exports
 
+FIRST_INSTALL=false
+if [[ ! -f "${INSTALL_STATE_FILE}" ]]; then
+  FIRST_INSTALL=true
+fi
+
 if [[ ! -f ".env" ]]; then
-  [[ -f ".env.example" ]] || err ".env not found and .env.example is missing"
-  cp .env.example .env
-  echo "[install_on_server] Created .env from .env.example"
+  if [[ "${FIRST_INSTALL}" == "true" ]]; then
+    [[ -f ".env.example" ]] || err ".env not found and .env.example is missing"
+    cp .env.example .env
+    echo "[install_on_server] Created .env from .env.example (first install)"
+  else
+    err ".env is missing on update deploy; refusing to recreate automatically"
+  fi
 fi
 
 if [[ ! -f "config.yaml" ]]; then
-  [[ -f "config.example.yaml" ]] || err "config.yaml not found and config.example.yaml is missing"
-  cp config.example.yaml config.yaml
-  echo "[install_on_server] Created config.yaml from config.example.yaml"
+  if [[ "${FIRST_INSTALL}" == "true" ]]; then
+    [[ -f "config.example.yaml" ]] || err "config.yaml not found and config.example.yaml is missing"
+    cp config.example.yaml config.yaml
+    echo "[install_on_server] Created config.yaml from config.example.yaml (first install)"
+  else
+    err "config.yaml is missing on update deploy; refusing to recreate automatically"
+  fi
 fi
 
 if [[ ! -d ".venv" ]]; then
@@ -83,4 +97,5 @@ systemctl enable "${SERVICE_NAME}"
 systemctl restart "${SERVICE_NAME}"
 systemctl status --no-pager "${SERVICE_NAME}"
 
+touch "${INSTALL_STATE_FILE}"
 echo "[install_on_server] Deployment complete"
