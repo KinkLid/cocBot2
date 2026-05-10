@@ -4,9 +4,10 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/clanbot
-Environment=PYTHONPATH=/opt/clanbot
-ExecStart=/opt/clanbot/.venv/bin/python -m app.main
+WorkingDirectory=/opt/cocbot
+EnvironmentFile=/opt/cocbot/.env
+Environment=PYTHONPATH=/opt/cocbot
+ExecStart=/opt/cocbot/.venv/bin/python -m app.main
 Restart=always
 RestartSec=5
 User=ubuntu
