@@ -1,0 +1,17 @@
+[Unit]
+Description=Clash of Clans Clan Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=__PROJECT_DIR__
+EnvironmentFile=__PROJECT_DIR__/.env
+Environment=PYTHONPATH=__PROJECT_DIR__
+ExecStart=__PROJECT_DIR__/.venv/bin/python -m app.main
+Restart=always
+RestartSec=5
+User=__SERVICE_USER__
+Group=__SERVICE_GROUP__
+
+[Install]
+WantedBy=multi-user.target
