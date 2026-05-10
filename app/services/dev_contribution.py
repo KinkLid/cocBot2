@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,10 @@ class ContributionRankingRow:
     wars: int
     score: float
     newcomer: bool
+
+
+class ContributionDataUnavailableError(Exception):
+    """Raised when contribution ranking cannot be built due to missing cycle data."""
 
 
 class DevContributionService:
@@ -44,9 +49,13 @@ class DevContributionService:
             return False
         return (utcnow() - membership.joined_at) < timedelta(days=15)
 
-    async def build_contribution_ranking(self, period) -> list[ContributionRankingRow]:
+    async def build_contribution_ranking(self, period: Any) -> list[ContributionRankingRow]:
         stats_rows = await self.repo.aggregated_player_stats(clan_tag=self.config.main_clan_tag, period_start=period.start, period_end=period.end)
+        if not stats_rows:
+            raise ContributionDataUnavailableError("⚠️ Общий вклад пока нельзя посчитать: в текущем цикле еще нет игроков в основном клане.")
         attacks_rows = await self.repo.attack_rows_for_players(self.config.main_clan_tag, period.start, period.end, [r.player_tag for r in stats_rows])
+        if not attacks_rows:
+            raise ContributionDataUnavailableError("⚠️ Общий вклад пока пуст: в текущем цикле еще никто не сделал атак.")
         by_tag: dict[str, float] = {r.player_tag: 0.0 for r in stats_rows}
         for attack, war, violation in attacks_rows:
             by_tag[attack.attacker_tag] += calculate_attack_contribution(
@@ -67,6 +76,8 @@ class DevContributionService:
         return sorted(ranking, key=lambda x: x.score, reverse=True)
 
     def format_contribution_ranking(self, ranking: list[ContributionRankingRow]) -> str:
+        if not ranking:
+            raise ContributionDataUnavailableError("⚠️ Общий вклад пока нельзя посчитать: в текущем цикле еще нет данных по атакам.")
         lines = ["🏆 Общий вклад", ""]
         for idx, row in enumerate(ranking, 1):
             suffix = " 🆕 новенький" if row.newcomer else ""
