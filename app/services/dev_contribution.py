@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -20,6 +20,12 @@ from app.models.enums import WarType
 from app.models import ClanMembershipHistory
 from app.repositories.stats import StatsRepository
 from app.utils.time import utcnow
+
+
+def _normalize_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 @dataclass(slots=True)
@@ -55,7 +61,8 @@ class DevContributionService:
         )
         if membership is None:
             return False
-        return (utcnow() - membership.joined_at) < timedelta(days=15)
+        joined_at = _normalize_utc(membership.joined_at)
+        return (_normalize_utc(utcnow()) - joined_at) < timedelta(days=15)
 
     async def build_contribution_ranking(self, period: Any) -> list[ContributionRankingRow]:
         stats_rows = await self.repo.aggregated_player_stats(clan_tag=self.config.main_clan_tag, period_start=period.start, period_end=period.end)
