@@ -36,10 +36,12 @@ def calculate_attack_contribution(data: ContributionAttackInput) -> Contribution
     if data.is_cwl:
         return ContributionResult(score=round((base_score + (triple_bonus if data.stars == 3 else 0)) * 1.25, 2))
 
-    score = base_score + (triple_bonus if data.stars == 3 else 0)
     if data.is_above_self_violation:
-        score = 0 if data.stars < 3 else score
-    elif data.is_too_low_violation:
+        score = 0 if data.stars < 3 else base_score
+    else:
+        score = base_score + (triple_bonus if data.stars == 3 else 0)
+
+    if data.is_too_low_violation and not data.is_above_self_violation:
         excess = data.defender_position - (data.attacker_position + 10)
         penalty_base = 8 + 2 * max(excess, 0)
         score = -2 * penalty_base if data.stars == 3 else -4 * penalty_base

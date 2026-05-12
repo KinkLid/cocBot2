@@ -31,11 +31,32 @@ NOW = datetime.now(UTC)
 def test_contribution_formulas():
     assert calculate_attack_contribution(ContributionAttackInput(stars=2, destruction=80, attacker_position=1, defender_position=1, is_cwl=False)).score == 28
     assert calculate_attack_contribution(ContributionAttackInput(stars=2, destruction=80, attacker_position=1, defender_position=1, is_cwl=False, is_above_self_violation=True)).score == 0
-    assert calculate_attack_contribution(ContributionAttackInput(stars=3, destruction=100, attacker_position=1, defender_position=1, is_cwl=False, is_above_self_violation=True)).score == 48
+    assert calculate_attack_contribution(ContributionAttackInput(stars=3, destruction=100, attacker_position=1, defender_position=1, is_cwl=False, is_above_self_violation=True)).score == 40
     assert calculate_attack_contribution(ContributionAttackInput(stars=3, destruction=100, attacker_position=1, defender_position=20, is_cwl=False, is_too_low_violation=True)).score < 0
     assert calculate_attack_contribution(ContributionAttackInput(stars=1, destruction=30, attacker_position=1, defender_position=20, is_cwl=False, is_too_low_violation=True)).score == -40
     assert calculate_attack_contribution(ContributionAttackInput(stars=3, destruction=100, attacker_position=1, defender_position=20, is_cwl=True, is_too_low_violation=True, is_above_self_violation=True)).score == 65.0
 
+
+
+
+def test_above_self_non_triple_is_zero():
+    assert calculate_attack_contribution(ContributionAttackInput(stars=2, destruction=99, attacker_position=7, defender_position=6, is_cwl=False, is_above_self_violation=True)).score == 0
+
+
+def test_above_self_triple_uses_base_without_bonus():
+    assert calculate_attack_contribution(ContributionAttackInput(stars=3, destruction=100, attacker_position=7, defender_position=6, is_cwl=False, is_above_self_violation=True)).score == 40
+
+
+def test_regular_triple_without_violation_keeps_bonus():
+    assert calculate_attack_contribution(ContributionAttackInput(stars=3, destruction=100, attacker_position=7, defender_position=7, is_cwl=False)).score == 48
+
+
+def test_too_low_still_applies_when_not_above_self():
+    assert calculate_attack_contribution(ContributionAttackInput(stars=2, destruction=80, attacker_position=1, defender_position=20, is_cwl=False, is_too_low_violation=True)).score < 0
+
+
+def test_cwl_still_ignores_positional_penalties():
+    assert calculate_attack_contribution(ContributionAttackInput(stars=3, destruction=100, attacker_position=1, defender_position=20, is_cwl=True, is_too_low_violation=True, is_above_self_violation=True)).score == 65.0
 
 def test_unused_penalties():
     assert calculate_unused_attack_penalty(is_cwl=False, unused_attacks=1, attacker_position=1, opponent_positions=[1, 2, 3], attacked_defender_positions=[1, 2]) == -12
@@ -261,7 +282,7 @@ def test_build_contribution_ranking_recomputes_above_self_without_persisted_viol
     war = SimpleNamespace(id=101, war_type=contribution_module.WarType.REGULAR, start_time=NOW - timedelta(hours=2))
     attacks = [
         (SimpleNamespace(attacker_tag="#P1", stars=3, destruction=100, attacker_position=5, defender_position=5, observed_at=NOW), war, None),
-        (SimpleNamespace(attacker_tag="#P1", stars=3, destruction=20, attacker_position=10, defender_position=9, observed_at=NOW), war, None),
+        (SimpleNamespace(attacker_tag="#P1", stars=3, destruction=100, attacker_position=10, defender_position=9, observed_at=NOW), war, None),
     ]
     monkeypatch.setattr(contribution_module.StatsRepository, "aggregated_player_stats", AsyncMock(return_value=[player]))
     monkeypatch.setattr(contribution_module.StatsRepository, "attack_rows_for_players", AsyncMock(return_value=attacks))
@@ -280,10 +301,10 @@ def test_build_contribution_ranking_real_cases_for_timon_and_0b_sos(app_yaml_con
     p2 = SimpleNamespace(player_tag="#SOS", player_name="0b_sos", wars=1, player_id=2)
     war = SimpleNamespace(id=103, war_type=contribution_module.WarType.REGULAR, start_time=NOW - timedelta(hours=2))
     attacks = [
-        (SimpleNamespace(attacker_tag="#TIMON", stars=3, destruction=20, attacker_position=10, defender_position=9, observed_at=NOW), war, None),
-        (SimpleNamespace(attacker_tag="#TIMON", stars=3, destruction=20, attacker_position=11, defender_position=10, observed_at=NOW), war, None),
+        (SimpleNamespace(attacker_tag="#TIMON", stars=3, destruction=100, attacker_position=10, defender_position=9, observed_at=NOW), war, None),
+        (SimpleNamespace(attacker_tag="#TIMON", stars=3, destruction=100, attacker_position=11, defender_position=10, observed_at=NOW), war, None),
         (SimpleNamespace(attacker_tag="#SOS", stars=1, destruction=93, attacker_position=15, defender_position=15, observed_at=NOW), war, None),
-        (SimpleNamespace(attacker_tag="#SOS", stars=3, destruction=20, attacker_position=20, defender_position=19, observed_at=NOW), war, None),
+        (SimpleNamespace(attacker_tag="#SOS", stars=3, destruction=100, attacker_position=20, defender_position=19, observed_at=NOW), war, None),
     ]
     monkeypatch.setattr(contribution_module.StatsRepository, "aggregated_player_stats", AsyncMock(return_value=[p1, p2]))
     monkeypatch.setattr(contribution_module.StatsRepository, "attack_rows_for_players", AsyncMock(return_value=attacks))
