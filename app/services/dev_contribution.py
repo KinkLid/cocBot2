@@ -16,8 +16,9 @@ from app.domain.dev_contribution import (
     calculate_cwl_unused_attack_penalty,
     calculate_unused_attack_penalty,
 )
-from app.models.enums import WarType
+from app.models.enums import ViolationCode, WarType
 from app.models import ClanMembershipHistory
+from app.domain.violation_rules import evaluate_attack_violation
 from app.repositories.stats import StatsRepository
 from app.utils.time import utcnow
 
@@ -74,18 +75,27 @@ class DevContributionService:
         by_tag: dict[str, float] = {r.player_tag: 0.0 for r in stats_rows}
         attacks_by_war_tag: dict[tuple[int, str], int] = defaultdict(int)
         attacked_by_war: dict[int, set[int]] = defaultdict(set)
-        for attack, war, violation in attacks_rows:
+        for attack, war, _violation in attacks_rows:
             attacks_by_war_tag[(war.id, attack.attacker_tag)] += 1
             attacked_by_war[war.id].add(attack.defender_position)
+            is_cwl = war.war_type.value == "cwl"
+            decision = None if is_cwl else evaluate_attack_violation(
+                war_start_time=war.start_time,
+                attack_seen_at=attack.observed_at,
+                attacker_position=attack.attacker_position,
+                defender_position=attack.defender_position,
+            )
+            is_above_self_violation = bool(decision and decision.code == ViolationCode.ABOVE_SELF)
+            is_too_low_violation = bool(decision and decision.code == ViolationCode.TOO_LOW)
             by_tag[attack.attacker_tag] += calculate_attack_contribution(
                 ContributionAttackInput(
                     stars=attack.stars,
                     destruction=attack.destruction,
                     attacker_position=attack.attacker_position,
                     defender_position=attack.defender_position,
-                    is_cwl=war.war_type.value == "cwl",
-                    is_above_self_violation=bool(violation and violation.code.value == "above_self"),
-                    is_too_low_violation=bool(violation and violation.code.value == "too_low"),
+                    is_cwl=is_cwl,
+                    is_above_self_violation=is_above_self_violation,
+                    is_too_low_violation=is_too_low_violation,
                 )
             ).score
 
