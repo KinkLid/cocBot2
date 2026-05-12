@@ -87,7 +87,7 @@ def test_dev_contribution_no_attacks_returns_user_message(app_yaml_config, monke
 
     asyncio.run(dev_contribution(message, _build_test_app_context(app_yaml_config)))
 
-    message.answer.assert_called_once_with("⚠️ Общий вклад пока пуст: в текущем цикле еще никто не сделал атак.")
+    message.answer.assert_called_once_with("⚠️ Общий вклад пока недоступен: в текущем цикле еще недостаточно данных.")
 
 
 def test_dev_contribution_all_zero_still_builds_report(app_yaml_config, monkeypatch):
@@ -165,7 +165,17 @@ def test_dev_contribution_empty_players_returns_user_message(app_yaml_config, mo
 
     asyncio.run(dev_contribution(message, _build_test_app_context(app_yaml_config)))
 
-    message.answer.assert_called_once_with("⚠️ Общий вклад пока нельзя посчитать: в текущем цикле еще нет игроков в основном клане.")
+    message.answer.assert_called_once_with("⚠️ Общий вклад пока недоступен: в текущем цикле еще недостаточно данных.")
+
+
+def test_dev_contribution_datetime_error_returns_cycle_safe_message(app_yaml_config, monkeypatch):
+    _mock_cycle(monkeypatch)
+    monkeypatch.setattr(DevContributionService, "build_contribution_ranking", AsyncMock(side_effect=TypeError("can't compare offset-naive and offset-aware datetimes")))
+    message = FakeMessage("🏆 Общий вклад", user_id=1)
+
+    asyncio.run(dev_contribution(message, _build_test_app_context(app_yaml_config)))
+
+    message.answer.assert_called_once_with("⚠️ Общий вклад пока недоступен: в текущем цикле еще недостаточно данных.")
 
 
 def test_is_newcomer_accepts_naive_joined_at():

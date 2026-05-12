@@ -20,6 +20,9 @@ from app.services.stats import StatsService
 router = Router(name="admin")
 logger = logging.getLogger(__name__)
 
+CONTRIBUTION_BUILD_ERROR = "⚠️ Не удалось построить отчет по общему вкладу. Попробуйте позже."
+CONTRIBUTION_CYCLE_DATA_ERROR = "⚠️ Общий вклад пока недоступен: в текущем цикле еще недостаточно данных."
+
 
 def _ensure_admin(app_context: AppContext, telegram_id: int) -> None:
     if not app_context.auth_service.is_admin(telegram_id):
@@ -95,10 +98,17 @@ async def dev_contribution(message: Message, app_context: AppContext) -> None:
             text = service.format_contribution_ranking(ranking)
         await send_long_message(message, text)
     except ContributionDataUnavailableError as exc:
-        await message.answer(str(exc))
+        err = str(exc)
+        if "в текущем цикле" in err or "недостаточно" in err:
+            await message.answer(CONTRIBUTION_CYCLE_DATA_ERROR)
+            return
+        await message.answer(err or CONTRIBUTION_BUILD_ERROR)
+    except (ValueError, TypeError):
+        logger.exception("Failed to build dev contribution report due to malformed period/datetime data")
+        await message.answer(CONTRIBUTION_CYCLE_DATA_ERROR)
     except Exception:
         logger.exception("Failed to build dev contribution report")
-        await message.answer("⚠️ Не удалось построить отчет по общему вкладу. Попробуйте позже.")
+        await message.answer(CONTRIBUTION_BUILD_ERROR)
 
 
 @router.message(F.text == "✏️ Обновить ссылку на чат")

@@ -266,6 +266,34 @@ async def test_unexpected_error_is_logged_and_user_gets_safe_message(app_context
 
 
 @pytest.mark.asyncio
+async def test_my_stats_contribution_error_returns_safe_message(app_context, session_maker, monkeypatch):
+    await _seed_user_with_links(session_maker, user_id=120, tags=["#P2"])
+    await _seed_player(session_maker, "#P2", in_clan=True)
+    async with session_maker() as session:
+        session.add_all(
+            [
+                CycleBoundary(source_key="cwl:2026-03", boundary_at=datetime(2026, 3, 6, tzinfo=UTC), description="b1"),
+                CycleBoundary(source_key="cwl:2026-04", boundary_at=datetime(2026, 4, 4, tzinfo=UTC), description="b2"),
+            ]
+        )
+        await session.commit()
+
+    state = FakeState()
+    state._data["selected_player_tag"] = "#P2"
+    callback = FakeCallback(data="my_stats_period:current", user_id=120)
+
+    async def _boom(*_args, **_kwargs):
+        raise TypeError("can't compare offset-naive and offset-aware datetimes")
+
+    monkeypatch.setattr("app.services.stats.StatsService.player_stats", _boom)
+
+    await choose_my_stats_period(callback, state, app_context)
+
+    assert "Не удалось показать статистику" in callback.message.answer.await_args.args[0]
+    assert callback.answer.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_choose_account_updates_selected_player_tag():
     state = FakeState()
     callback = FakeCallback(data="my_stats_account:#P8", user_id=119)
