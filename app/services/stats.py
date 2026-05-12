@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -8,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.settings import AppYamlConfig
 from app.repositories.stats import StatsRepository
 from app.schemas.dto import PlayerStatsDTO
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -54,7 +57,11 @@ class StatsService:
 
         try:
             ranking = await DevContributionService(self.session, self.config).build_contribution_ranking(SimpleNamespace(start=period_start, end=period_end))
-        except ContributionDataUnavailableError:
+        except (ContributionDataUnavailableError, ValueError, TypeError):
+            logger.exception("Failed to build contribution ranking for player stats")
+            return 0
+        except Exception:
+            logger.exception("Unexpected error while building contribution ranking for player stats")
             return 0
 
         for idx, row in enumerate(ranking, 1):
