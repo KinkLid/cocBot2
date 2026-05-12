@@ -107,6 +107,27 @@ def test_dev_contribution_all_zero_still_builds_report(app_yaml_config, monkeypa
     assert "0.00" in sent_text
 
 
+def test_dev_contribution_mixed_players_with_and_without_stars_builds_report(app_yaml_config, monkeypatch):
+    _mock_cycle(monkeypatch)
+    p1 = SimpleNamespace(player_tag="#P1", player_name="P1", wars=1, player_id=1)
+    p2 = SimpleNamespace(player_tag="#P2", player_name="P2", wars=0, player_id=2)
+    war = SimpleNamespace(id=1, war_type=SimpleNamespace(value="random"))
+    monkeypatch.setattr(contribution_module.StatsRepository, "aggregated_player_stats", AsyncMock(return_value=[p1, p2]))
+    monkeypatch.setattr(contribution_module.StatsRepository, "attack_rows_for_players", AsyncMock(return_value=[(SimpleNamespace(attacker_tag="#P1", stars=3, destruction=100, attacker_position=1, defender_position=1), war, None)]))
+    monkeypatch.setattr(contribution_module.StatsRepository, "participation_rows_for_players", AsyncMock(return_value=[]))
+    monkeypatch.setattr(contribution_module.StatsRepository, "enemy_participation_rows_for_wars", AsyncMock(return_value=[]))
+
+    async def newcomer_side_effect(_player_id, score, wars):
+        return score == 0 and wars == 0
+
+    monkeypatch.setattr(DevContributionService, "is_newcomer", AsyncMock(side_effect=newcomer_side_effect))
+
+    ranking = asyncio.run(DevContributionService(object(), app_yaml_config).build_contribution_ranking(SimpleNamespace(start=datetime.now(UTC)-timedelta(days=1), end=datetime.now(UTC))))
+    assert len(ranking) == 2
+    assert ranking[0].player_tag == "#P1"
+    assert ranking[1].newcomer is True
+
+
 def test_dev_contribution_applies_regular_unused_attack_penalty(app_yaml_config, monkeypatch):
     _mock_cycle(monkeypatch)
     player = SimpleNamespace(player_tag="#P1", player_name="P1", wars=1, player_id=1)
@@ -145,6 +166,25 @@ def test_dev_contribution_empty_players_returns_user_message(app_yaml_config, mo
     asyncio.run(dev_contribution(message, _build_test_app_context(app_yaml_config)))
 
     message.answer.assert_called_once_with("⚠️ Общий вклад пока нельзя посчитать: в текущем цикле еще нет игроков в основном клане.")
+
+
+def test_is_newcomer_accepts_naive_joined_at():
+    class DummySession:
+        async def scalar(self, *_args, **_kwargs):
+            now_aware = datetime.now(UTC)
+            return SimpleNamespace(joined_at=now_aware.replace(tzinfo=None) - timedelta(days=5))
+
+    service = DevContributionService(DummySession(), SimpleNamespace(main_clan_tag="#CLAN"))
+    assert asyncio.run(service.is_newcomer(10, 0.0, 0)) is True
+
+
+def test_is_newcomer_accepts_aware_joined_at():
+    class DummySession:
+        async def scalar(self, *_args, **_kwargs):
+            return SimpleNamespace(joined_at=datetime.now(UTC) - timedelta(days=5))
+
+    service = DevContributionService(DummySession(), SimpleNamespace(main_clan_tag="#CLAN"))
+    assert asyncio.run(service.is_newcomer(10, 0.0, 0)) is True
 
 
 def test_newcomer_mark_with_zero_score_and_zero_wars(monkeypatch):
