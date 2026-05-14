@@ -404,3 +404,38 @@ def test_dev_contribution_skips_cwl_unused_penalty_before_war_end(app_yaml_confi
     ranking = asyncio.run(DevContributionService(object(), app_yaml_config).build_contribution_ranking(SimpleNamespace(start=NOW - timedelta(days=1), end=NOW)))
     by_tag = {row.player_tag: row.score for row in ranking}
     assert by_tag["#P1"] == 0.0
+
+def test_select_best_attack_result_prefers_stars_over_destruction():
+    assert contribution_module._select_best_attack_result([(2, 60.0), (1, 90.0)]) == (2, 60.0)
+
+
+def test_select_best_attack_result_prefers_higher_destruction_on_equal_stars():
+    assert contribution_module._select_best_attack_result([(2, 60.0), (2, 75.0)]) == (2, 75.0)
+
+
+def test_select_best_attack_result_prefers_higher_stars_even_with_lower_destruction():
+    assert contribution_module._select_best_attack_result([(1, 90.0), (2, 40.0)]) == (2, 40.0)
+
+
+def test_select_best_attack_result_returns_zero_baseline_when_empty():
+    assert contribution_module._select_best_attack_result([]) == (0, 0.0)
+
+
+def test_build_contribution_ranking_uses_only_previous_attacks_for_baseline(app_yaml_config, monkeypatch):
+    player = SimpleNamespace(player_tag="#P1", player_name="P1", wars=1, player_id=1)
+    war = SimpleNamespace(id=130, war_type=contribution_module.WarType.REGULAR, start_time=NOW - timedelta(hours=2), end_time=NOW - timedelta(minutes=1))
+    attacks = [
+        (SimpleNamespace(attacker_tag="#P1", stars=2, destruction=60, attacker_position=5, defender_position=5, observed_at=NOW), war, None),
+        (SimpleNamespace(attacker_tag="#P1", stars=1, destruction=90, attacker_position=5, defender_position=5, observed_at=NOW + timedelta(seconds=1)), war, None),
+        (SimpleNamespace(attacker_tag="#P1", stars=2, destruction=70, attacker_position=5, defender_position=5, observed_at=NOW + timedelta(seconds=2)), war, None),
+    ]
+
+    monkeypatch.setattr(contribution_module.StatsRepository, "aggregated_player_stats", AsyncMock(return_value=[player]))
+    monkeypatch.setattr(contribution_module.StatsRepository, "attack_rows_for_players", AsyncMock(return_value=attacks))
+    monkeypatch.setattr(contribution_module.StatsRepository, "participation_rows_for_players", AsyncMock(return_value=[]))
+    monkeypatch.setattr(contribution_module.StatsRepository, "enemy_participation_rows_for_wars", AsyncMock(return_value=[]))
+    monkeypatch.setattr(DevContributionService, "is_newcomer", AsyncMock(return_value=False))
+
+    ranking = asyncio.run(DevContributionService(object(), app_yaml_config).build_contribution_ranking(SimpleNamespace(start=NOW - timedelta(days=1), end=NOW)))
+
+    assert ranking[0].score == 51.0

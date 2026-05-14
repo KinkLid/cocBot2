@@ -29,6 +29,12 @@ def _normalize_utc(dt: datetime) -> datetime:
     return dt.astimezone(UTC)
 
 
+def _select_best_attack_result(attacks: list[tuple[int, float]]) -> tuple[int, float]:
+    if not attacks:
+        return 0, 0.0
+    return max(attacks, key=lambda attack_result: (attack_result[0], attack_result[1]))
+
+
 @dataclass(slots=True)
 class ContributionRankingRow:
     player_tag: str
@@ -84,7 +90,7 @@ class DevContributionService:
                 row[0].defender_position,
             ),
         )
-        previous_best_by_target: dict[tuple[int, int], tuple[int, float]] = {}
+        previous_attacks_by_target: dict[tuple[int, int], list[tuple[int, float]]] = defaultdict(list)
 
         for attack, war, _violation in sorted_attacks_rows:
             attacks_by_war_tag[(war.id, attack.attacker_tag)] += 1
@@ -99,8 +105,9 @@ class DevContributionService:
             is_above_self_violation = bool(decision and decision.code == ViolationCode.ABOVE_SELF)
             is_too_low_violation = bool(decision and decision.code == ViolationCode.TOO_LOW)
             target_key = (war.id, attack.defender_position)
-            prev_best_stars, prev_best_destruction = previous_best_by_target.get(target_key, (0, 0.0))
-            target_already_attacked = target_key in previous_best_by_target
+            previous_attacks = previous_attacks_by_target[target_key]
+            prev_best_stars, prev_best_destruction = _select_best_attack_result(previous_attacks)
+            target_already_attacked = bool(previous_attacks)
 
             by_tag[attack.attacker_tag] += calculate_attack_contribution(
                 ContributionAttackInput(
@@ -117,10 +124,7 @@ class DevContributionService:
                 )
             ).score
 
-            previous_best_by_target[target_key] = (
-                max(prev_best_stars, attack.stars),
-                max(prev_best_destruction, attack.destruction),
-            )
+            previous_attacks_by_target[target_key].append((attack.stars, attack.destruction))
 
         participation_rows = await self.repo.participation_rows_for_players(self.config.main_clan_tag, period.start, period.end, [r.player_tag for r in stats_rows])
         war_ids = list({war.id for _, war in participation_rows})
