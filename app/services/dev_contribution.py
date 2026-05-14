@@ -75,7 +75,18 @@ class DevContributionService:
         by_tag: dict[str, float] = {r.player_tag: 0.0 for r in stats_rows}
         attacks_by_war_tag: dict[tuple[int, str], int] = defaultdict(int)
         attacked_by_war: dict[int, set[int]] = defaultdict(set)
-        for attack, war, _violation in attacks_rows:
+        sorted_attacks_rows = sorted(
+            attacks_rows,
+            key=lambda row: (
+                row[1].id,
+                _normalize_utc(row[0].observed_at),
+                row[0].attacker_tag,
+                row[0].defender_position,
+            ),
+        )
+        previous_best_by_target: dict[tuple[int, int], tuple[int, float]] = {}
+
+        for attack, war, _violation in sorted_attacks_rows:
             attacks_by_war_tag[(war.id, attack.attacker_tag)] += 1
             attacked_by_war[war.id].add(attack.defender_position)
             is_cwl = war.war_type.value == "cwl"
@@ -87,6 +98,10 @@ class DevContributionService:
             )
             is_above_self_violation = bool(decision and decision.code == ViolationCode.ABOVE_SELF)
             is_too_low_violation = bool(decision and decision.code == ViolationCode.TOO_LOW)
+            target_key = (war.id, attack.defender_position)
+            prev_best_stars, prev_best_destruction = previous_best_by_target.get(target_key, (0, 0.0))
+            target_already_attacked = target_key in previous_best_by_target
+
             by_tag[attack.attacker_tag] += calculate_attack_contribution(
                 ContributionAttackInput(
                     stars=attack.stars,
@@ -94,10 +109,18 @@ class DevContributionService:
                     attacker_position=attack.attacker_position,
                     defender_position=attack.defender_position,
                     is_cwl=is_cwl,
+                    previous_best_stars=prev_best_stars,
+                    previous_best_destruction=prev_best_destruction,
+                    target_already_attacked=target_already_attacked,
                     is_above_self_violation=is_above_self_violation,
                     is_too_low_violation=is_too_low_violation,
                 )
             ).score
+
+            previous_best_by_target[target_key] = (
+                max(prev_best_stars, attack.stars),
+                max(prev_best_destruction, attack.destruction),
+            )
 
         participation_rows = await self.repo.participation_rows_for_players(self.config.main_clan_tag, period.start, period.end, [r.player_tag for r in stats_rows])
         war_ids = list({war.id for _, war in participation_rows})
@@ -106,14 +129,23 @@ class DevContributionService:
         for enemy in enemy_rows:
             opponent_positions_by_war[enemy.war_id].append(enemy.map_position)
 
+        now_utc = _normalize_utc(utcnow())
         for participant, war in participation_rows:
             used = attacks_by_war_tag.get((war.id, participant.player_tag), 0)
+            war_end_utc = _normalize_utc(war.end_time)
+            war_finished = now_utc >= war_end_utc
+
             if war.war_type == WarType.CWL:
+                if not war_finished:
+                    continue
                 by_tag[participant.player_tag] += calculate_cwl_unused_attack_penalty(
                     unused_attack=used == 0,
                     opponent_positions=opponent_positions_by_war.get(war.id, []),
                     attacked_defender_positions=list(attacked_by_war.get(war.id, set())),
                 )
+                continue
+
+            if not war_finished:
                 continue
 
             by_tag[participant.player_tag] += calculate_unused_attack_penalty(
