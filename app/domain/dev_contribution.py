@@ -10,6 +10,9 @@ class ContributionAttackInput:
     attacker_position: int
     defender_position: int
     is_cwl: bool
+    previous_best_stars: int = 0
+    previous_best_destruction: float = 0.0
+    target_already_attacked: bool = False
     is_above_self_violation: bool = False
     is_too_low_violation: bool = False
 
@@ -30,16 +33,33 @@ class ContributionResult:
 
 
 def calculate_attack_contribution(data: ContributionAttackInput) -> ContributionResult:
-    base_score = data.stars * 10 + data.destruction / 10
     triple_bonus = 12 if data.is_cwl else 8
 
+    if data.target_already_attacked and data.previous_best_stars >= 3:
+        base_score = data.stars * 10 * 0.5
+        allow_triple_bonus = False
+    elif data.target_already_attacked and data.previous_best_stars > 0:
+        overlap_stars = min(data.previous_best_stars, data.stars)
+        new_stars = max(data.stars - data.previous_best_stars, 0)
+        stars_component = overlap_stars * 10 * 0.5 + new_stars * 10
+
+        overlap_destruction = min(data.previous_best_destruction, data.destruction)
+        new_destruction = max(data.destruction - data.previous_best_destruction, 0)
+        destruction_component = overlap_destruction / 10 * 0.5 + new_destruction / 10
+
+        base_score = stars_component + destruction_component
+        allow_triple_bonus = True
+    else:
+        base_score = data.stars * 10 + data.destruction / 10
+        allow_triple_bonus = True
+
     if data.is_cwl:
-        return ContributionResult(score=round((base_score + (triple_bonus if data.stars == 3 else 0)) * 1.25, 2))
+        return ContributionResult(score=round((base_score + (triple_bonus if data.stars == 3 and allow_triple_bonus else 0)) * 1.25, 2))
 
     if data.is_above_self_violation:
         score = 0 if data.stars < 3 else base_score
     else:
-        score = base_score + (triple_bonus if data.stars == 3 else 0)
+        score = base_score + (triple_bonus if data.stars == 3 and allow_triple_bonus else 0)
 
     if data.is_too_low_violation and not data.is_above_self_violation:
         excess = data.defender_position - (data.attacker_position + 10)

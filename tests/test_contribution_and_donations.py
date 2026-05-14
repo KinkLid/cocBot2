@@ -118,7 +118,7 @@ def test_dev_contribution_all_zero_still_builds_report(app_yaml_config, monkeypa
     _mock_cycle(monkeypatch)
     player = SimpleNamespace(player_tag="#P1", player_name="P1", wars=0, player_id=1)
     monkeypatch.setattr(contribution_module.StatsRepository, "aggregated_player_stats", AsyncMock(return_value=[player]))
-    monkeypatch.setattr(contribution_module.StatsRepository, "attack_rows_for_players", AsyncMock(return_value=[(SimpleNamespace(attacker_tag="#P1", stars=0, destruction=0, attacker_position=1, defender_position=1, observed_at=NOW), SimpleNamespace(id=1, war_type=SimpleNamespace(value="random"), start_time=NOW - timedelta(hours=1)), None)]))
+    monkeypatch.setattr(contribution_module.StatsRepository, "attack_rows_for_players", AsyncMock(return_value=[(SimpleNamespace(attacker_tag="#P1", stars=0, destruction=0, attacker_position=1, defender_position=1, observed_at=NOW), SimpleNamespace(id=1, war_type=SimpleNamespace(value="random"), start_time=NOW - timedelta(hours=1), end_time=NOW + timedelta(hours=1)), None)]))
     monkeypatch.setattr(contribution_module.StatsRepository, "participation_rows_for_players", AsyncMock(return_value=[]))
     monkeypatch.setattr(contribution_module.StatsRepository, "enemy_participation_rows_for_wars", AsyncMock(return_value=[]))
     monkeypatch.setattr(DevContributionService, "is_newcomer", AsyncMock(return_value=False))
@@ -135,7 +135,7 @@ def test_dev_contribution_mixed_players_with_and_without_stars_builds_report(app
     _mock_cycle(monkeypatch)
     p1 = SimpleNamespace(player_tag="#P1", player_name="P1", wars=1, player_id=1)
     p2 = SimpleNamespace(player_tag="#P2", player_name="P2", wars=0, player_id=2)
-    war = SimpleNamespace(id=1, war_type=SimpleNamespace(value="random"), start_time=NOW - timedelta(hours=1))
+    war = SimpleNamespace(id=1, war_type=SimpleNamespace(value="random"), start_time=NOW - timedelta(hours=1), end_time=NOW - timedelta(minutes=1))
     monkeypatch.setattr(contribution_module.StatsRepository, "aggregated_player_stats", AsyncMock(return_value=[p1, p2]))
     monkeypatch.setattr(contribution_module.StatsRepository, "attack_rows_for_players", AsyncMock(return_value=[(SimpleNamespace(attacker_tag="#P1", stars=3, destruction=100, attacker_position=1, defender_position=1, observed_at=NOW), war, None)]))
     monkeypatch.setattr(contribution_module.StatsRepository, "participation_rows_for_players", AsyncMock(return_value=[]))
@@ -155,7 +155,7 @@ def test_dev_contribution_mixed_players_with_and_without_stars_builds_report(app
 def test_dev_contribution_applies_regular_unused_attack_penalty(app_yaml_config, monkeypatch):
     _mock_cycle(monkeypatch)
     player = SimpleNamespace(player_tag="#P1", player_name="P1", wars=1, player_id=1)
-    war = SimpleNamespace(id=10, war_type=contribution_module.WarType.REGULAR, start_time=NOW - timedelta(hours=1))
+    war = SimpleNamespace(id=10, war_type=contribution_module.WarType.REGULAR, start_time=NOW - timedelta(hours=1), end_time=NOW - timedelta(minutes=1))
     monkeypatch.setattr(contribution_module.StatsRepository, "aggregated_player_stats", AsyncMock(return_value=[player]))
     monkeypatch.setattr(contribution_module.StatsRepository, "attack_rows_for_players", AsyncMock(return_value=[(SimpleNamespace(attacker_tag="#P1", stars=2, destruction=80, attacker_position=5, defender_position=5, observed_at=NOW), war, None)]))
     monkeypatch.setattr(contribution_module.StatsRepository, "participation_rows_for_players", AsyncMock(return_value=[(SimpleNamespace(player_tag="#P1", map_position=1), war)]))
@@ -170,7 +170,7 @@ def test_dev_contribution_applies_cwl_unused_attack_penalty(app_yaml_config, mon
     _mock_cycle(monkeypatch)
     player = SimpleNamespace(player_tag="#P1", player_name="P1", wars=1, player_id=1)
     ally = SimpleNamespace(player_tag="#ALLY", player_name="Ally", wars=1, player_id=2)
-    war = SimpleNamespace(id=20, war_type=contribution_module.WarType.CWL)
+    war = SimpleNamespace(id=20, war_type=contribution_module.WarType.CWL, end_time=NOW - timedelta(minutes=1))
     monkeypatch.setattr(contribution_module.StatsRepository, "aggregated_player_stats", AsyncMock(return_value=[player, ally]))
     monkeypatch.setattr(contribution_module.StatsRepository, "attack_rows_for_players", AsyncMock(return_value=[(SimpleNamespace(attacker_tag="#ALLY", stars=1, destruction=20, attacker_position=2, defender_position=1, observed_at=NOW), war, None)]))
     monkeypatch.setattr(contribution_module.StatsRepository, "participation_rows_for_players", AsyncMock(return_value=[(SimpleNamespace(player_tag="#P1", map_position=1), war)]))
@@ -256,7 +256,7 @@ def test_dev_contribution_handler_always_answers(app_yaml_config, monkeypatch):
 def test_contribution_ranking_tie_break_is_stable(app_yaml_config, monkeypatch):
     player_b = SimpleNamespace(player_tag="#B", player_name="Bravo", wars=1, player_id=1)
     player_a = SimpleNamespace(player_tag="#A", player_name="Alpha", wars=1, player_id=2)
-    war = SimpleNamespace(id=99, war_type=contribution_module.WarType.REGULAR, start_time=NOW - timedelta(hours=1))
+    war = SimpleNamespace(id=99, war_type=contribution_module.WarType.REGULAR, start_time=NOW - timedelta(hours=1), end_time=NOW - timedelta(minutes=1))
 
     monkeypatch.setattr(contribution_module.StatsRepository, "aggregated_player_stats", AsyncMock(return_value=[player_b, player_a]))
     monkeypatch.setattr(
@@ -279,7 +279,7 @@ def test_contribution_ranking_tie_break_is_stable(app_yaml_config, monkeypatch):
 
 def test_build_contribution_ranking_recomputes_above_self_without_persisted_violation(app_yaml_config, monkeypatch):
     player = SimpleNamespace(player_tag="#P1", player_name="P1", wars=1, player_id=1)
-    war = SimpleNamespace(id=101, war_type=contribution_module.WarType.REGULAR, start_time=NOW - timedelta(hours=2))
+    war = SimpleNamespace(id=101, war_type=contribution_module.WarType.REGULAR, start_time=NOW - timedelta(hours=2), end_time=NOW - timedelta(minutes=1))
     attacks = [
         (SimpleNamespace(attacker_tag="#P1", stars=3, destruction=100, attacker_position=5, defender_position=5, observed_at=NOW), war, None),
         (SimpleNamespace(attacker_tag="#P1", stars=3, destruction=100, attacker_position=10, defender_position=9, observed_at=NOW), war, None),
@@ -299,7 +299,7 @@ def test_build_contribution_ranking_recomputes_above_self_without_persisted_viol
 def test_build_contribution_ranking_real_cases_for_timon_and_0b_sos(app_yaml_config, monkeypatch):
     p1 = SimpleNamespace(player_tag="#TIMON", player_name="timon", wars=1, player_id=1)
     p2 = SimpleNamespace(player_tag="#SOS", player_name="0b_sos", wars=1, player_id=2)
-    war = SimpleNamespace(id=103, war_type=contribution_module.WarType.REGULAR, start_time=NOW - timedelta(hours=2))
+    war = SimpleNamespace(id=103, war_type=contribution_module.WarType.REGULAR, start_time=NOW - timedelta(hours=2), end_time=NOW - timedelta(minutes=1))
     attacks = [
         (SimpleNamespace(attacker_tag="#TIMON", stars=3, destruction=100, attacker_position=10, defender_position=9, observed_at=NOW), war, None),
         (SimpleNamespace(attacker_tag="#TIMON", stars=3, destruction=100, attacker_position=11, defender_position=10, observed_at=NOW), war, None),
@@ -319,7 +319,7 @@ def test_build_contribution_ranking_real_cases_for_timon_and_0b_sos(app_yaml_con
 
 def test_build_contribution_ranking_keeps_cwl_without_positional_penalties(app_yaml_config, monkeypatch):
     player = SimpleNamespace(player_tag="#P1", player_name="P1", wars=1, player_id=1)
-    war = SimpleNamespace(id=102, war_type=contribution_module.WarType.CWL, start_time=NOW - timedelta(hours=2))
+    war = SimpleNamespace(id=102, war_type=contribution_module.WarType.CWL, start_time=NOW - timedelta(hours=2), end_time=NOW - timedelta(minutes=1))
     attacks = [(SimpleNamespace(attacker_tag="#P1", stars=3, destruction=100, attacker_position=10, defender_position=1, observed_at=NOW), war, None)]
     monkeypatch.setattr(contribution_module.StatsRepository, "aggregated_player_stats", AsyncMock(return_value=[player]))
     monkeypatch.setattr(contribution_module.StatsRepository, "attack_rows_for_players", AsyncMock(return_value=attacks))
@@ -329,3 +329,78 @@ def test_build_contribution_ranking_keeps_cwl_without_positional_penalties(app_y
 
     ranking = asyncio.run(DevContributionService(object(), app_yaml_config).build_contribution_ranking(SimpleNamespace(start=NOW - timedelta(days=1), end=NOW)))
     assert ranking[0].score == 65.0
+
+def test_repeated_target_after_prior_triple_gets_only_half_star_component():
+    result = calculate_attack_contribution(
+        ContributionAttackInput(
+            stars=3,
+            destruction=100,
+            attacker_position=1,
+            defender_position=1,
+            is_cwl=False,
+            previous_best_stars=3,
+            previous_best_destruction=100,
+            target_already_attacked=True,
+        )
+    )
+    assert result.score == 15.0
+
+
+def test_repeated_target_improvement_uses_best_previous_baseline_and_keeps_triple_bonus():
+    result = calculate_attack_contribution(
+        ContributionAttackInput(
+            stars=3,
+            destruction=90,
+            attacker_position=1,
+            defender_position=1,
+            is_cwl=False,
+            previous_best_stars=1,
+            previous_best_destruction=40,
+            target_already_attacked=True,
+        )
+    )
+    assert result.score == 40.0
+
+
+def test_repeated_target_after_only_zero_stars_uses_regular_formula():
+    result = calculate_attack_contribution(
+        ContributionAttackInput(
+            stars=2,
+            destruction=80,
+            attacker_position=1,
+            defender_position=1,
+            is_cwl=False,
+            previous_best_stars=0,
+            previous_best_destruction=70,
+            target_already_attacked=True,
+        )
+    )
+    assert result.score == 28.0
+
+
+def test_dev_contribution_skips_regular_unused_penalty_before_war_end(app_yaml_config, monkeypatch):
+    player = SimpleNamespace(player_tag="#P1", player_name="P1", wars=1, player_id=1)
+    war = SimpleNamespace(id=110, war_type=contribution_module.WarType.REGULAR, start_time=NOW - timedelta(hours=1), end_time=NOW + timedelta(hours=4))
+    monkeypatch.setattr(contribution_module.StatsRepository, "aggregated_player_stats", AsyncMock(return_value=[player]))
+    monkeypatch.setattr(contribution_module.StatsRepository, "attack_rows_for_players", AsyncMock(return_value=[(SimpleNamespace(attacker_tag="#P1", stars=2, destruction=80, attacker_position=5, defender_position=5, observed_at=NOW), war, None)]))
+    monkeypatch.setattr(contribution_module.StatsRepository, "participation_rows_for_players", AsyncMock(return_value=[(SimpleNamespace(player_tag="#P1", map_position=1), war)]))
+    monkeypatch.setattr(contribution_module.StatsRepository, "enemy_participation_rows_for_wars", AsyncMock(return_value=[SimpleNamespace(war_id=110, map_position=1), SimpleNamespace(war_id=110, map_position=2)]))
+    monkeypatch.setattr(DevContributionService, "is_newcomer", AsyncMock(return_value=False))
+
+    ranking = asyncio.run(DevContributionService(object(), app_yaml_config).build_contribution_ranking(SimpleNamespace(start=NOW - timedelta(days=1), end=NOW)))
+    assert ranking[0].score == 28.0
+
+
+def test_dev_contribution_skips_cwl_unused_penalty_before_war_end(app_yaml_config, monkeypatch):
+    player = SimpleNamespace(player_tag="#P1", player_name="P1", wars=1, player_id=1)
+    ally = SimpleNamespace(player_tag="#ALLY", player_name="Ally", wars=1, player_id=2)
+    war = SimpleNamespace(id=120, war_type=contribution_module.WarType.CWL, end_time=NOW + timedelta(hours=3))
+    monkeypatch.setattr(contribution_module.StatsRepository, "aggregated_player_stats", AsyncMock(return_value=[player, ally]))
+    monkeypatch.setattr(contribution_module.StatsRepository, "attack_rows_for_players", AsyncMock(return_value=[(SimpleNamespace(attacker_tag="#ALLY", stars=1, destruction=20, attacker_position=2, defender_position=1, observed_at=NOW), war, None)]))
+    monkeypatch.setattr(contribution_module.StatsRepository, "participation_rows_for_players", AsyncMock(return_value=[(SimpleNamespace(player_tag="#P1", map_position=1), war)]))
+    monkeypatch.setattr(contribution_module.StatsRepository, "enemy_participation_rows_for_wars", AsyncMock(return_value=[SimpleNamespace(war_id=120, map_position=1), SimpleNamespace(war_id=120, map_position=2)]))
+    monkeypatch.setattr(DevContributionService, "is_newcomer", AsyncMock(return_value=False))
+
+    ranking = asyncio.run(DevContributionService(object(), app_yaml_config).build_contribution_ranking(SimpleNamespace(start=NOW - timedelta(days=1), end=NOW)))
+    by_tag = {row.player_tag: row.score for row in ranking}
+    assert by_tag["#P1"] == 0.0
