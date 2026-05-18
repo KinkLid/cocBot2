@@ -178,3 +178,38 @@ class StatsRepository:
             Violation.detected_at <= period_end,
         )
         return int((await self.session.execute(stmt)).scalar_one())
+
+    async def current_clan_members_violations(
+        self,
+        *,
+        clan_tag: str,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> list[tuple[str, str, int | None, int]]:
+        stmt = (
+            select(
+                PlayerAccount.player_tag,
+                PlayerAccount.name,
+                PlayerAccount.current_clan_rank,
+                func.count(Violation.id).label("violations"),
+            )
+            .outerjoin(
+                Violation,
+                and_(
+                    Violation.player_tag == PlayerAccount.player_tag,
+                    Violation.detected_at >= period_start,
+                    Violation.detected_at <= period_end,
+                ),
+            )
+            .where(
+                PlayerAccount.current_in_clan.is_(True),
+                PlayerAccount.current_clan_tag == clan_tag,
+            )
+            .group_by(PlayerAccount.player_tag, PlayerAccount.name, PlayerAccount.current_clan_rank)
+            .order_by(
+                func.count(Violation.id).desc(),
+                PlayerAccount.current_clan_rank.asc().nulls_last(),
+                PlayerAccount.name.asc(),
+            )
+        )
+        return [(row[0], row[1], row[2], int(row[3])) for row in (await self.session.execute(stmt)).all()]

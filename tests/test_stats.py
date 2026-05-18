@@ -259,6 +259,73 @@ async def test_player_stats_place_matches_contribution_ranking(session, app_yaml
 async def test_player_stats_handles_missing_contribution_data(session, app_yaml_config, monkeypatch):
     await seed_stats_data(session)
 
+
+@pytest.mark.asyncio
+async def test_violations_ranking_current_cycle_basic(session, app_yaml_config):
+    await seed_stats_data(session)
+    service = StatsService(session, app_yaml_config)
+    text = await service.violations_ranking_current_cycle(
+        datetime(2026, 4, 1, 0, tzinfo=UTC),
+        datetime(2026, 4, 2, 23, tzinfo=UTC),
+    )
+    assert "🚨 Нарушения за текущий цикл" in text
+    assert "1. Bravo — 1" in text
+    assert "Alpha" not in text
+    assert "Ghost" not in text
+
+
+@pytest.mark.asyncio
+async def test_violations_ranking_current_cycle_tie_breaker(session, app_yaml_config):
+    await seed_stats_data(session)
+    p4 = PlayerAccount(
+        player_tag="#P10",
+        name="Charlie",
+        town_hall=16,
+        current_clan_tag="#CLAN",
+        current_clan_name="TestClan",
+        current_clan_rank=3,
+        current_in_clan=True,
+        last_seen_in_clan_at=datetime(2026, 4, 1, tzinfo=UTC),
+        first_absent_at=None,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 4, 1, tzinfo=UTC),
+    )
+    session.add(p4)
+    await session.flush()
+    session.add(
+        Violation(
+            attack_id=None,
+            war_id=None,
+            player_tag="#P10",
+            code=ViolationCode.TOO_LOW,
+            reason_text="tie",
+            player_position=3,
+            target_position=10,
+            detected_at=datetime(2026, 4, 1, 16, tzinfo=UTC),
+        )
+    )
+    await session.commit()
+
+    service = StatsService(session, app_yaml_config)
+    text = await service.violations_ranking_current_cycle(
+        datetime(2026, 4, 1, 0, tzinfo=UTC),
+        datetime(2026, 4, 2, 23, tzinfo=UTC),
+    )
+    lines = [line for line in text.splitlines() if line and line[0].isdigit()]
+    assert lines[0].endswith("Bravo — 1")
+    assert lines[1].endswith("Charlie — 1")
+
+
+@pytest.mark.asyncio
+async def test_violations_ranking_current_cycle_empty(session, app_yaml_config):
+    await seed_stats_data(session)
+    service = StatsService(session, app_yaml_config)
+    text = await service.violations_ranking_current_cycle(
+        datetime(2026, 3, 1, 0, tzinfo=UTC),
+        datetime(2026, 3, 2, 23, tzinfo=UTC),
+    )
+    assert text == "✅ За текущий цикл нарушений пока нет."
+
     async def fail_ranking(*_args, **_kwargs):
         raise ContributionDataUnavailableError("no data")
 

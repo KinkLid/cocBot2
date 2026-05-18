@@ -7,7 +7,16 @@ from types import SimpleNamespace
 import pytest
 from unittest.mock import AsyncMock
 
-from app.bot.handlers.admin import admin_clan_stats, admin_players_sort, dev_contribution, download_log_file, last_logs, update_chat_link_finish, update_chat_link_start
+from app.bot.handlers.admin import (
+    admin_clan_stats,
+    admin_players_sort,
+    current_cycle_violations,
+    dev_contribution,
+    download_log_file,
+    last_logs,
+    update_chat_link_finish,
+    update_chat_link_start,
+)
 from app.bot.handlers.common import clan_chat_link
 from app.bot.states.chat_link import ChatLinkStates
 from app.services.clan_chat import ClanChatService
@@ -177,3 +186,26 @@ async def test_message_too_long_error_no_longer_reproduced_in_admin_callback(app
 
     assert callback.message.answer.await_count > 1
     callback.answer.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_current_cycle_violations_is_admin_only(app_context):
+    message = FakeMessage(text="🚨 Нарушения", user_id=999)
+    await current_cycle_violations(message, app_context)
+    assert "Недостаточно прав" in message.answer.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_current_cycle_violations_handler_always_replies(app_context, monkeypatch):
+    async def fake_current_cycle(self):
+        return SimpleNamespace(start=datetime(2026, 4, 1, 0, tzinfo=UTC), end=datetime(2026, 4, 2, 0, tzinfo=UTC))
+
+    async def fake_ranking(self, period_start, period_end):
+        return "✅ За текущий цикл нарушений пока нет."
+
+    monkeypatch.setattr(PeriodService, "current_cycle", fake_current_cycle)
+    monkeypatch.setattr(StatsService, "violations_ranking_current_cycle", fake_ranking)
+
+    message = FakeMessage(text="🚨 Нарушения", user_id=1)
+    await current_cycle_violations(message, app_context)
+    message.answer.assert_awaited()

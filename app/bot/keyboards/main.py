@@ -21,6 +21,7 @@ def main_menu(is_admin: bool, is_registered: bool) -> ReplyKeyboardMarkup:
                 [KeyboardButton(text="📦 Выгрузка JSON")],
                 [KeyboardButton(text="🏆 Общий вклад")],
                 [KeyboardButton(text="🧪 Dev-донаты")],
+                [KeyboardButton(text="🚨 Нарушения")],
                 [KeyboardButton(text="✏️ Обновить ссылку на чат")],
                 [KeyboardButton(text="📜 Последние логи")],
                 [KeyboardButton(text="🗂 Скачать лог-файл")],
