@@ -7,6 +7,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, FSInputFile, Message
 
 from app.bot.keyboards.common import admin_sort_keyboard
+from app.bot.keyboards.main import main_menu
+from app.bot.states.capital import CapitalRaidStates
 from app.bot.utils.telegram_text import edit_or_send_long_message, send_long_message
 from app.bot.states.chat_link import ChatLinkStates
 from app.container import AppContext
@@ -16,6 +18,7 @@ from app.services.dev_contribution import ContributionDataUnavailableError, DevC
 from app.services.donations import DonationService
 from app.services.export import ExportService
 from app.services.period import PeriodService
+from app.services.registration import RegistrationService
 from app.services.stats import StatsService
 
 router = Router(name="admin")
@@ -184,12 +187,43 @@ async def current_cycle_violations(message: Message, app_context: AppContext) ->
 
 
 @router.message(F.text == "🏰 Столица")
-async def capital_raid_report(message: Message, app_context: AppContext) -> None:
+async def capital_raid_report_start(message: Message, state: FSMContext, app_context: AppContext) -> None:
     try:
         _ensure_admin(app_context, message.from_user.id)
     except PermissionError:
         await message.answer("⛔ Недостаточно прав")
         return
-    async with app_context.session_maker() as session:
-        text = await CapitalRaidReportService(session, app_context.config).build_latest_weekend_report()
-    await send_long_message(message, text)
+    await state.set_state(CapitalRaidStates.awaiting_capital_raid_count)
+    await message.answer("🏰 Столица\nВведите, за сколько последних рейдов показать отчет.\nДопустимое число: от 1 до 10.")
+
+
+@router.message(CapitalRaidStates.awaiting_capital_raid_count)
+async def capital_raid_report_finish(message: Message, state: FSMContext, app_context: AppContext) -> None:
+    text = (message.text or "").strip()
+    if text == "⬅️ Назад":
+        await state.clear()
+        is_admin = app_context.auth_service.is_admin(message.from_user.id)
+        async with app_context.session_maker() as session:
+            is_registered = await RegistrationService(session, app_context.clash_client).is_registered(message.from_user.id)
+        await message.answer("Главное меню", reply_markup=main_menu(is_admin, is_registered))
+        return
+    try:
+        count = int(text)
+    except ValueError:
+        await message.answer("⚠️ Введите целое число от 1 до 10.")
+        return
+    if count < 1:
+        await message.answer("⚠️ Число должно быть от 1 до 10.")
+        return
+    if count > 10:
+        await message.answer("⚠️ Максимум можно запросить 10 последних рейдов.")
+        return
+    try:
+        async with app_context.session_maker() as session:
+            report = await CapitalRaidReportService(session, app_context.config).build_recent_weekends_report(count)
+        await send_long_message(message, report)
+    except Exception:
+        logger.exception("Failed to build capital raid report")
+        await message.answer("⚠️ Не удалось построить отчет по клановой столице. Попробуйте позже.")
+    finally:
+        await state.clear()
