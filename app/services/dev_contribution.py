@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import AppYamlConfig
@@ -54,8 +54,33 @@ class DevContributionService:
         self.config = config
         self.repo = StatsRepository(session)
 
-    async def is_newcomer(self, player_id: int) -> bool:
-        membership = await self.session.scalar(
+    async def get_total_membership_duration(self, player_id: int) -> timedelta | None:
+        now_utc = _normalize_utc(utcnow())
+        membership_query: Select[tuple[ClanMembershipHistory]] = (
+            select(ClanMembershipHistory)
+            .where(
+                ClanMembershipHistory.player_id == player_id,
+                ClanMembershipHistory.clan_tag == self.config.main_clan_tag,
+            )
+            .order_by(ClanMembershipHistory.joined_at.asc())
+        )
+        rows = await self.session.scalars(membership_query)
+        history = list(rows)
+        if history:
+            total = timedelta(0)
+            for membership in history:
+                joined_at = membership.joined_at
+                if joined_at is None:
+                    continue
+                joined_at_utc = _normalize_utc(joined_at)
+                left_at = membership.left_at
+                end_at_utc = now_utc if left_at is None else _normalize_utc(left_at)
+                if end_at_utc <= joined_at_utc:
+                    continue
+                total += end_at_utc - joined_at_utc
+            return total
+
+        fallback_membership = await self.session.scalar(
             select(ClanMembershipHistory)
             .where(
                 ClanMembershipHistory.player_id == player_id,
@@ -64,12 +89,15 @@ class DevContributionService:
             )
             .order_by(ClanMembershipHistory.joined_at.desc())
         )
-        if membership is None:
+        if fallback_membership is None or fallback_membership.joined_at is None:
+            return None
+        return max(timedelta(0), now_utc - _normalize_utc(fallback_membership.joined_at))
+
+    async def is_newcomer(self, player_id: int) -> bool:
+        total_duration = await self.get_total_membership_duration(player_id)
+        if total_duration is None:
             return False
-        if membership.joined_at is None:
-            return False
-        joined_at = _normalize_utc(membership.joined_at)
-        return (_normalize_utc(utcnow()) - joined_at) < timedelta(days=7)
+        return total_duration < timedelta(days=7)
 
     async def build_contribution_ranking(self, period: Any) -> list[ContributionRankingRow]:
         stats_rows = await self.repo.aggregated_player_stats(clan_tag=self.config.main_clan_tag, period_start=period.start, period_end=period.end)
