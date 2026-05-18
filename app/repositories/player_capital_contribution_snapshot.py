@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import PlayerCapitalContributionSnapshot
@@ -44,3 +44,12 @@ class PlayerCapitalContributionSnapshotRepository:
             .limit(1)
         )
         return res.scalar_one_or_none()
+
+    async def count_for_player(self, player_tag: str, clan_tag: str) -> int:
+        res = await self.session.execute(
+            select(func.count(PlayerCapitalContributionSnapshot.id)).where(
+                PlayerCapitalContributionSnapshot.player_tag == player_tag,
+                PlayerCapitalContributionSnapshot.clan_tag == clan_tag,
+            )
+        )
+        return int(res.scalar_one())

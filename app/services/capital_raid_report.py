@@ -36,6 +36,7 @@ class CapitalRaidReportService:
         return "\n".join(lines)
 
     async def build_recent_weekends_report(self, count: int) -> str:
+        available_count = await self.repo.count_completed_weekends(self.config.main_clan_tag)
         weekends = await self.repo.list_latest_completed_weekends(self.config.main_clan_tag, limit=10)
         if not weekends:
             return "⚠️ По клановой столице пока нет сохраненных данных."
@@ -53,7 +54,9 @@ class CapitalRaidReportService:
             "bonus_attacks": 0,
             "capital_resources_looted": 0,
             "invested_gold": 0,
+            "invested_gold_suffix": "",
         })
+        has_insufficient_history = False
         for p in participants:
             row = player_stats[p.player_tag]
             row["player_name"] = p.player_name
@@ -61,24 +64,38 @@ class CapitalRaidReportService:
             row["bonus_attacks"] = int(row["bonus_attacks"]) + p.bonus_attacks
             row["capital_resources_looted"] = int(row["capital_resources_looted"]) + p.capital_resources_looted
         for player_tag, row in player_stats.items():
+            snapshots_count = await self.snapshot_repo.count_for_player(player_tag, self.config.main_clan_tag)
             base = await self.snapshot_repo.get_first_at_or_after(player_tag, self.config.main_clan_tag, oldest_end)
             latest = await self.snapshot_repo.get_latest(player_tag, self.config.main_clan_tag)
             if base is None or latest is None:
                 row["invested_gold"] = 0
+                if snapshots_count < 2:
+                    row["invested_gold_suffix"] = "*"
+                    has_insufficient_history = True
                 continue
             row["invested_gold"] = max(latest.value - base.value, 0)
+            if snapshots_count < 2:
+                row["invested_gold_suffix"] = "*"
+                has_insufficient_history = True
         sorted_rows = sorted(
             player_stats.values(),
             key=lambda p: (-int(p["capital_resources_looted"]), -int(p["attacks"]), str(p["player_name"])),
         )
         lines = [
             "🏰 Клановая столица",
+            f"📦 В базе завершенных рейдов: {available_count}",
+            f"📊 В отчете использовано рейдов: {len(selected)}",
             f"📚 Последние {count} рейдов",
             f"📅 {oldest_start.date().isoformat()} — {newest_end.date().isoformat()}",
             "",
         ]
         for idx, row in enumerate(sorted_rows, start=1):
             lines.append(
-                f"{idx}. {row['player_name']} — атак: {row['attacks']}, бонусных: {row['bonus_attacks']}, налутал: {row['capital_resources_looted']}, вложил: {row['invested_gold']}"
+                f"{idx}. {row['player_name']} — атак: {row['attacks']}, бонусных: {row['bonus_attacks']}, налутал: {row['capital_resources_looted']}, вложил: {row['invested_gold']}{row['invested_gold_suffix']}"
             )
+        if has_insufficient_history:
+            lines.extend([
+                "",
+                "* по этим игрокам пока недостаточно накопленных snapshot’ов для точного расчета вложений",
+            ])
         return "\n".join(lines)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from app.clients.clash import ClashApiClient
 from app.config.settings import AppYamlConfig
 from app.models import CapitalRaidParticipant, CapitalRaidWeekend
@@ -7,6 +9,9 @@ from app.repositories.capital_raid import CapitalRaidRepository
 from app.repositories.player_account import PlayerAccountRepository
 from app.repositories.player_capital_contribution_snapshot import PlayerCapitalContributionSnapshotRepository
 from app.utils.time import parse_coc_time, utcnow
+
+
+logger = logging.getLogger(__name__)
 
 
 class CapitalRaidSyncService:
@@ -21,12 +26,29 @@ class CapitalRaidSyncService:
     async def sync_finished(self) -> None:
         seasons = await self.client.get_capital_raid_seasons(self.config.main_clan_tag, limit=10)
         now = utcnow()
+        api_total = len(seasons)
+        ended_from_api = 0
+        created = 0
+        updated = 0
+        participants_saved = 0
+        snapshots_saved = 0
         for season in seasons:
             end_time = parse_coc_time(season.end_time)
             if end_time is None or end_time > now:
                 continue
+            ended_from_api += 1
             raid_season_id = f"{season.start_time or 'unknown'}:{season.end_time or 'unknown'}"
             existing_weekend = await self.repo.get_weekend(self.config.main_clan_tag, raid_season_id)
+            existed_before = existing_weekend is not None
+            logger.debug(
+                "Capital raid season processing: raid_season_id=%s, start_time=%s, end_time=%s, state=%s, members_count=%s, existed_before=%s",
+                raid_season_id,
+                season.start_time,
+                season.end_time,
+                season.state,
+                len(season.members),
+                existed_before,
+            )
             weekend = await self.repo.upsert_weekend(CapitalRaidWeekend(
                 clan_tag=self.config.main_clan_tag,
                 raid_season_id=raid_season_id,
@@ -40,9 +62,14 @@ class CapitalRaidSyncService:
                 defensive_reward=season.defensive_reward,
                 processed_at=now,
             ))
-            first_processed = existing_weekend is None
+            first_processed = not existed_before
+            if first_processed:
+                created += 1
+            else:
+                updated += 1
             participants = []
             for m in season.members:
+                participants_saved += 1
                 player = await self.players.get_by_tag(m.tag)
                 snapshot = None
                 try:
@@ -68,5 +95,22 @@ class CapitalRaidSyncService:
                         observed_at=weekend.processed_at,
                         value=snapshot,
                     )
+                    snapshots_saved += 1
             await self.repo.replace_participants(weekend.id, participants)
         await self.session.commit()
+        count_db_completed = await self.repo.count_completed_weekends(self.config.main_clan_tag)
+        logger.info(
+            "Capital raid sync: api_total=%s, ended=%s, created=%s, updated=%s, participants_saved=%s, snapshots_saved=%s",
+            api_total,
+            ended_from_api,
+            created,
+            updated,
+            participants_saved,
+            snapshots_saved,
+        )
+        if ended_from_api > 1 and count_db_completed < ended_from_api and count_db_completed == 1:
+            logger.warning(
+                "Capital raid sync warning: API returned %s ended weekends, but only %s completed weekend is present in DB after sync",
+                ended_from_api,
+                count_db_completed,
+            )

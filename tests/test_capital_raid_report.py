@@ -54,6 +54,8 @@ async def test_build_recent_weekends_report_aggregates_one_weekend(session, app_
     await session.commit()
 
     text = await CapitalRaidReportService(session, app_yaml_config).build_recent_weekends_report(1)
+    assert "📦 В базе завершенных рейдов: 1" in text
+    assert "📊 В отчете использовано рейдов: 1" in text
     assert "📚 Последние 1 рейдов" in text
     assert "1. Alpha — атак: 4, бонусных: 1, налутал: 1000, вложил: 150" in text
 
@@ -84,4 +86,24 @@ async def test_build_recent_weekends_report_aggregates_three_weekends_and_sorts(
     assert "Aardvark" in lines[1]
     assert "Alpha" in lines[2]
     assert "Alpha — атак: 5, бонусных: 2, налутал: 450, вложил: 30" in text
-    assert "Aardvark — атак: 4, бонусных: 0, налутал: 450, вложил: 0" in text
+    assert "Aardvark — атак: 4, бонусных: 0, налутал: 450, вложил: 0*" in text
+    assert "* по этим игрокам пока недостаточно накопленных snapshot’ов для точного расчета вложений" in text
+
+
+@pytest.mark.asyncio
+async def test_build_recent_weekends_report_invested_without_star_when_snapshots_enough(session, app_yaml_config):
+    w1 = _weekend("s1", 1, 3)
+    session.add(w1)
+    await session.flush()
+    session.add(
+        CapitalRaidParticipant(weekend_id=w1.id, player_id=None, player_tag="#A", player_name="Alpha", attacks=1, attack_limit=6, bonus_attacks=0, capital_resources_looted=100, clan_capital_contributions_snapshot=0)
+    )
+    session.add_all([
+        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 3, 0, tzinfo=UTC), value=50),
+        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 4, 0, tzinfo=UTC), value=50),
+    ])
+    await session.commit()
+
+    text = await CapitalRaidReportService(session, app_yaml_config).build_recent_weekends_report(1)
+    assert "Alpha — атак: 1, бонусных: 0, налутал: 100, вложил: 0" in text
+    assert "вложил: 0*" not in text
