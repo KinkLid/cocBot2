@@ -215,7 +215,7 @@ def test_is_newcomer_accepts_naive_joined_at():
             return SimpleNamespace(joined_at=now_aware.replace(tzinfo=None) - timedelta(days=5))
 
     service = DevContributionService(DummySession(), SimpleNamespace(main_clan_tag="#CLAN"))
-    assert asyncio.run(service.is_newcomer(10, 0.0, 0)) is True
+    assert asyncio.run(service.is_newcomer(10)) is True
 
 
 def test_is_newcomer_accepts_aware_joined_at():
@@ -224,16 +224,43 @@ def test_is_newcomer_accepts_aware_joined_at():
             return SimpleNamespace(joined_at=datetime.now(UTC) - timedelta(days=5))
 
     service = DevContributionService(DummySession(), SimpleNamespace(main_clan_tag="#CLAN"))
-    assert asyncio.run(service.is_newcomer(10, 0.0, 0)) is True
+    assert asyncio.run(service.is_newcomer(10)) is True
 
 
-def test_newcomer_mark_with_zero_score_and_zero_wars(monkeypatch):
+def test_is_newcomer_exactly_seven_days_is_false():
     class DummySession:
         async def scalar(self, *_args, **_kwargs):
-            return SimpleNamespace(joined_at=datetime.now(UTC) - timedelta(days=5))
+            return SimpleNamespace(joined_at=datetime.now(UTC) - timedelta(days=7))
 
     service = DevContributionService(DummySession(), SimpleNamespace(main_clan_tag="#CLAN"))
-    assert asyncio.run(service.is_newcomer(10, 0.0, 0)) is True
+    assert asyncio.run(service.is_newcomer(10)) is False
+
+
+def test_is_newcomer_more_than_seven_days_is_false():
+    class DummySession:
+        async def scalar(self, *_args, **_kwargs):
+            return SimpleNamespace(joined_at=datetime.now(UTC) - timedelta(days=8))
+
+    service = DevContributionService(DummySession(), SimpleNamespace(main_clan_tag="#CLAN"))
+    assert asyncio.run(service.is_newcomer(10)) is False
+
+
+def test_is_newcomer_without_joined_at_is_false():
+    class DummySession:
+        async def scalar(self, *_args, **_kwargs):
+            return SimpleNamespace(joined_at=None)
+
+    service = DevContributionService(DummySession(), SimpleNamespace(main_clan_tag="#CLAN"))
+    assert asyncio.run(service.is_newcomer(10)) is False
+
+
+def test_is_newcomer_with_existing_activity_still_true():
+    class DummySession:
+        async def scalar(self, *_args, **_kwargs):
+            return SimpleNamespace(joined_at=datetime.now(UTC) - timedelta(days=2))
+
+    service = DevContributionService(DummySession(), SimpleNamespace(main_clan_tag="#CLAN"))
+    assert asyncio.run(service.is_newcomer(10)) is True
 
 
 def test_dev_contribution_unexpected_error_logged_and_safe_message(app_yaml_config, monkeypatch):

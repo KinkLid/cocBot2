@@ -54,9 +54,7 @@ class DevContributionService:
         self.config = config
         self.repo = StatsRepository(session)
 
-    async def is_newcomer(self, player_id: int, score: float, wars: int) -> bool:
-        if score != 0 or wars != 0:
-            return False
+    async def is_newcomer(self, player_id: int) -> bool:
         membership = await self.session.scalar(
             select(ClanMembershipHistory)
             .where(
@@ -68,8 +66,10 @@ class DevContributionService:
         )
         if membership is None:
             return False
+        if membership.joined_at is None:
+            return False
         joined_at = _normalize_utc(membership.joined_at)
-        return (_normalize_utc(utcnow()) - joined_at) < timedelta(days=15)
+        return (_normalize_utc(utcnow()) - joined_at) < timedelta(days=7)
 
     async def build_contribution_ranking(self, period: Any) -> list[ContributionRankingRow]:
         stats_rows = await self.repo.aggregated_player_stats(clan_tag=self.config.main_clan_tag, period_start=period.start, period_end=period.end)
@@ -161,7 +161,7 @@ class DevContributionService:
             )
         ranking: list[ContributionRankingRow] = []
         for row in stats_rows:
-            newcomer = await self.is_newcomer(row.player_id, round(by_tag.get(row.player_tag, 0.0), 2), row.wars) if hasattr(row, "player_id") else False
+            newcomer = await self.is_newcomer(row.player_id) if hasattr(row, "player_id") else False
             ranking.append(ContributionRankingRow(row.player_tag, row.player_name, row.wars, round(by_tag.get(row.player_tag, 0.0), 2), newcomer))
         return sorted(ranking, key=lambda x: (-x.score, x.player_name.casefold(), x.player_tag))
 
