@@ -9,6 +9,7 @@ from app.container import AppContext
 from app.services.clan_sync import ClanSyncService
 from app.services.notifications import AdminNotifier
 from app.services.war_sync import WarSyncService
+from app.services.capital_raid_sync import CapitalRaidSyncService
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,7 @@ class StartupSyncService:
                     self.app_context.config,
                     notifier,
                 ).sync_all()
+                await CapitalRaidSyncService(session, self.app_context.clash_client, self.app_context.config).sync_finished()
             logger.info("Startup war sync completed")
             return True
         except Exception as exc:
