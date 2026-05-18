@@ -135,3 +135,16 @@ class StatsService:
             parts.append(f"⚠️ Нарушений: {row.violations}")
         parts.append(f"🏅 Место в клане: {row.place}")
         return "\n".join(parts)
+
+    async def violations_ranking_current_cycle(self, period_start, period_end) -> str:
+        rows = await self.repo.current_clan_members_violations(
+            clan_tag=self.config.main_clan_tag,
+            period_start=period_start,
+            period_end=period_end,
+        )
+        ranked = [row for row in rows if row[3] > 0]
+        if not ranked:
+            return "✅ За текущий цикл нарушений пока нет."
+        lines = ["🚨 Нарушения за текущий цикл", ""]
+        lines.extend(f"{idx}. {player_name} — {violations}" for idx, (_, player_name, _, violations) in enumerate(ranked, 1))
+        return "\n".join(lines)

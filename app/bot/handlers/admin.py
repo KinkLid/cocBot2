@@ -166,3 +166,17 @@ async def dev_donations(message: Message, app_context: AppContext) -> None:
         ranking = await service.build_current_cycle_donation_ranking()
         text = service.format_donation_ranking(ranking)
     await send_long_message(message, text)
+
+
+@router.message(F.text == "🚨 Нарушения")
+async def current_cycle_violations(message: Message, app_context: AppContext) -> None:
+    try:
+        _ensure_admin(app_context, message.from_user.id)
+    except PermissionError:
+        await message.answer("⛔ Недостаточно прав")
+        return
+    async with app_context.session_maker() as session:
+        period = await PeriodService(session).current_cycle()
+        service = StatsService(session, app_context.config)
+        text = await service.violations_ranking_current_cycle(period.start, period.end)
+    await send_long_message(message, text)
