@@ -47,15 +47,11 @@ class RegistrationService:
 
         profile = await self.clash_client.get_player(player_tag)
         tg_user = await self.telegram_users.get_or_create(telegram_id=telegram_id, username=username, now=now)
-        await self.players.upsert_player(
+        await self.players.upsert_player_profile(
             player_tag=profile.tag,
             name=profile.name,
             town_hall=profile.town_hall,
             now=now,
-            clan_tag=None,
-            clan_name=None,
-            clan_rank=None,
-            in_clan=False,
         )
         existing_links = await self.telegram_users.get_links(tg_user.id)
         already_linked = any(link.player_tag == profile.tag for link in existing_links)
