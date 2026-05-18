@@ -55,8 +55,9 @@ async def test_build_recent_weekends_report_aggregates_one_weekend(session, app_
 
     text = await CapitalRaidReportService(session, app_yaml_config).build_recent_weekends_report(1)
     assert "📦 В базе завершенных рейдов: 1" in text
-    assert "📊 В отчете использовано рейдов: 1" in text
-    assert "📚 Последние 1 рейдов" in text
+    assert "📚 Запрошено последних рейдов: 1" in text
+    assert "✅ Рейдов с данными участников: 1" in text
+    assert "⚠️ Пустых рейдов без данных участников: 0" in text
     assert "1. Alpha — атак: 4, бонусных: 1, налутал: 1000, вложил: 150" in text
 
 
@@ -107,3 +108,91 @@ async def test_build_recent_weekends_report_invested_without_star_when_snapshots
     text = await CapitalRaidReportService(session, app_yaml_config).build_recent_weekends_report(1)
     assert "Alpha — атак: 1, бонусных: 0, налутал: 100, вложил: 0" in text
     assert "вложил: 0*" not in text
+
+
+@pytest.mark.asyncio
+async def test_build_recent_weekends_report_shows_data_and_empty_counts(session, app_yaml_config):
+    w1, w2, w3 = _weekend("s1", 1, 3), _weekend("s2", 8, 10), _weekend("s3", 15, 17)
+    session.add_all([w1, w2, w3])
+    await session.flush()
+    session.add(
+        CapitalRaidParticipant(weekend_id=w1.id, player_id=None, player_tag="#A", player_name="Alpha", attacks=6, attack_limit=6, bonus_attacks=1, capital_resources_looted=1000, clan_capital_contributions_snapshot=0)
+    )
+    session.add_all([
+        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 3, 0, tzinfo=UTC), value=100),
+        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 4, 0, tzinfo=UTC), value=120),
+    ])
+    await session.commit()
+
+    text = await CapitalRaidReportService(session, app_yaml_config).build_recent_weekends_report(3)
+    assert "📚 Запрошено последних рейдов: 3" in text
+    assert "✅ Рейдов с данными участников: 1" in text
+    assert "⚠️ Пустых рейдов без данных участников: 2" in text
+
+
+@pytest.mark.asyncio
+async def test_build_recent_weekends_report_lists_empty_weekends(session, app_yaml_config):
+    w1, w2, w3 = _weekend("s1", 1, 3), _weekend("s2", 8, 10), _weekend("s3", 15, 17)
+    session.add_all([w1, w2, w3])
+    await session.flush()
+    session.add(
+        CapitalRaidParticipant(weekend_id=w1.id, player_id=None, player_tag="#A", player_name="Alpha", attacks=5, attack_limit=6, bonus_attacks=1, capital_resources_looted=700, clan_capital_contributions_snapshot=0)
+    )
+    session.add_all([
+        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 3, 0, tzinfo=UTC), value=10),
+        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 5, 0, tzinfo=UTC), value=20),
+    ])
+    await session.commit()
+
+    text = await CapitalRaidReportService(session, app_yaml_config).build_recent_weekends_report(3)
+    assert "⚠️ Рейды без данных:" in text
+    assert "- 2026-05-08 — 2026-05-10" in text
+    assert "- 2026-05-15 — 2026-05-17" in text
+
+
+@pytest.mark.asyncio
+async def test_build_recent_weekends_report_returns_message_when_all_selected_weekends_empty(session, app_yaml_config):
+    session.add_all([_weekend("s1", 1, 3), _weekend("s2", 8, 10), _weekend("s3", 15, 17)])
+    await session.commit()
+
+    text = await CapitalRaidReportService(session, app_yaml_config).build_recent_weekends_report(3)
+    assert text == "⚠️ По выбранным рейдам в базе нет данных участников клановой столицы."
+
+
+@pytest.mark.asyncio
+async def test_build_recent_weekends_report_all_selected_weekends_have_participants(session, app_yaml_config):
+    w1, w2, w3 = _weekend("s1", 1, 3), _weekend("s2", 8, 10), _weekend("s3", 15, 17)
+    session.add_all([w1, w2, w3])
+    await session.flush()
+    session.add_all([
+        CapitalRaidParticipant(weekend_id=w1.id, player_id=None, player_tag="#A", player_name="Alpha", attacks=1, attack_limit=6, bonus_attacks=0, capital_resources_looted=100, clan_capital_contributions_snapshot=0),
+        CapitalRaidParticipant(weekend_id=w2.id, player_id=None, player_tag="#A", player_name="Alpha", attacks=2, attack_limit=6, bonus_attacks=1, capital_resources_looted=200, clan_capital_contributions_snapshot=0),
+        CapitalRaidParticipant(weekend_id=w3.id, player_id=None, player_tag="#A", player_name="Alpha", attacks=3, attack_limit=6, bonus_attacks=1, capital_resources_looted=300, clan_capital_contributions_snapshot=0),
+    ])
+    session.add_all([
+        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 3, 0, tzinfo=UTC), value=100),
+        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 20, 0, tzinfo=UTC), value=160),
+    ])
+    await session.commit()
+
+    text = await CapitalRaidReportService(session, app_yaml_config).build_recent_weekends_report(3)
+    assert "✅ Рейдов с данными участников: 3" in text
+    assert "⚠️ Пустых рейдов без данных участников: 0" in text
+
+
+@pytest.mark.asyncio
+async def test_build_recent_weekends_report_aggregates_only_existing_participants(session, app_yaml_config):
+    w1, w2, w3 = _weekend("s1", 1, 3), _weekend("s2", 8, 10), _weekend("s3", 15, 17)
+    session.add_all([w1, w2, w3])
+    await session.flush()
+    session.add(
+        CapitalRaidParticipant(weekend_id=w2.id, player_id=None, player_tag="#A", player_name="Alpha", attacks=6, attack_limit=6, bonus_attacks=1, capital_resources_looted=1111, clan_capital_contributions_snapshot=0)
+    )
+    session.add_all([
+        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 10, 0, tzinfo=UTC), value=5),
+        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 11, 0, tzinfo=UTC), value=25),
+    ])
+    await session.commit()
+
+    text = await CapitalRaidReportService(session, app_yaml_config).build_recent_weekends_report(3)
+    assert "Alpha — атак: 6, бонусных: 1, налутал: 1111, вложил: 20" in text
