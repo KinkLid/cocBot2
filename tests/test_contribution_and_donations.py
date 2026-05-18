@@ -83,6 +83,7 @@ def test_admin_menu_buttons_updated():
     flat = [b.text for row in main_menu(is_admin=True, is_registered=True).keyboard for b in row]
     assert "🧪 Dev-вклад" not in flat
     assert "🏆 Общий вклад" in flat
+    assert "🏰 Столица" in flat
     assert "🧪 Dev-донаты" in flat
     assert "🚨 Нарушения" in flat
 
@@ -90,6 +91,7 @@ def test_admin_menu_buttons_updated():
 def test_violations_button_hidden_for_non_admin():
     flat = [b.text for row in main_menu(is_admin=False, is_registered=True).keyboard for b in row]
     assert "🚨 Нарушения" not in flat
+    assert "🏰 Столица" not in flat
 
 
 def _build_test_app_context(app_yaml_config):
