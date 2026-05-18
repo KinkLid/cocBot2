@@ -11,6 +11,7 @@ from app.bot.utils.telegram_text import edit_or_send_long_message, send_long_mes
 from app.bot.states.chat_link import ChatLinkStates
 from app.container import AppContext
 from app.services.clan_chat import ClanChatService
+from app.services.capital_raid_report import CapitalRaidReportService
 from app.services.dev_contribution import ContributionDataUnavailableError, DevContributionService
 from app.services.donations import DonationService
 from app.services.export import ExportService
@@ -179,4 +180,16 @@ async def current_cycle_violations(message: Message, app_context: AppContext) ->
         period = await PeriodService(session).current_cycle()
         service = StatsService(session, app_context.config)
         text = await service.violations_ranking_current_cycle(period.start, period.end)
+    await send_long_message(message, text)
+
+
+@router.message(F.text == "🏰 Столица")
+async def capital_raid_report(message: Message, app_context: AppContext) -> None:
+    try:
+        _ensure_admin(app_context, message.from_user.id)
+    except PermissionError:
+        await message.answer("⛔ Недостаточно прав")
+        return
+    async with app_context.session_maker() as session:
+        text = await CapitalRaidReportService(session, app_context.config).build_latest_weekend_report()
     await send_long_message(message, text)

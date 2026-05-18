@@ -5,6 +5,7 @@ from app.config.settings import AppYamlConfig
 from app.models import CapitalRaidParticipant, CapitalRaidWeekend
 from app.repositories.capital_raid import CapitalRaidRepository
 from app.repositories.player_account import PlayerAccountRepository
+from app.repositories.player_capital_contribution_snapshot import PlayerCapitalContributionSnapshotRepository
 from app.utils.time import parse_coc_time, utcnow
 
 
@@ -15,6 +16,7 @@ class CapitalRaidSyncService:
         self.config = config
         self.repo = CapitalRaidRepository(session)
         self.players = PlayerAccountRepository(session)
+        self.snapshots = PlayerCapitalContributionSnapshotRepository(session)
 
     async def sync_finished(self) -> None:
         seasons = await self.client.get_capital_raid_seasons(self.config.main_clan_tag, limit=10)
@@ -24,6 +26,7 @@ class CapitalRaidSyncService:
             if end_time is None or end_time > now:
                 continue
             raid_season_id = f"{season.start_time or 'unknown'}:{season.end_time or 'unknown'}"
+            existing_weekend = await self.repo.get_weekend(self.config.main_clan_tag, raid_season_id)
             weekend = await self.repo.upsert_weekend(CapitalRaidWeekend(
                 clan_tag=self.config.main_clan_tag,
                 raid_season_id=raid_season_id,
@@ -37,6 +40,7 @@ class CapitalRaidSyncService:
                 defensive_reward=season.defensive_reward,
                 processed_at=now,
             ))
+            first_processed = existing_weekend is None
             participants = []
             for m in season.members:
                 player = await self.players.get_by_tag(m.tag)
@@ -57,5 +61,12 @@ class CapitalRaidSyncService:
                     capital_resources_looted=m.capital_resources_looted,
                     clan_capital_contributions_snapshot=snapshot,
                 ))
+                if first_processed and snapshot is not None:
+                    await self.snapshots.add(
+                        player_tag=m.tag,
+                        clan_tag=self.config.main_clan_tag,
+                        observed_at=weekend.processed_at,
+                        value=snapshot,
+                    )
             await self.repo.replace_participants(weekend.id, participants)
         await self.session.commit()

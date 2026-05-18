@@ -37,3 +37,18 @@ class CapitalRaidRepository:
         for p in participants:
             self.session.add(p)
         await self.session.flush()
+
+    async def get_latest_completed_weekend(self, clan_tag: str) -> CapitalRaidWeekend | None:
+        res = await self.session.execute(
+            select(CapitalRaidWeekend)
+            .where(CapitalRaidWeekend.clan_tag == clan_tag, CapitalRaidWeekend.end_time.is_not(None))
+            .order_by(CapitalRaidWeekend.end_time.desc(), CapitalRaidWeekend.id.desc())
+            .limit(1)
+        )
+        return res.scalar_one_or_none()
+
+    async def list_participants_for_weekend(self, weekend_id: int) -> list[CapitalRaidParticipant]:
+        res = await self.session.execute(
+            select(CapitalRaidParticipant).where(CapitalRaidParticipant.weekend_id == weekend_id)
+        )
+        return list(res.scalars())
