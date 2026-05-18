@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 from app.bot.handlers.admin import (
     admin_clan_stats,
     admin_players_sort,
-    capital_raid_report,
+    capital_raid_report_start,
     current_cycle_violations,
     dev_contribution,
     download_log_file,
@@ -163,16 +163,19 @@ async def test_admin_players_list_callback_sends_chunks_when_report_too_long(app
 
 @pytest.mark.asyncio
 async def test_capital_button_handler_returns_report_for_admin(app_context, monkeypatch):
-    monkeypatch.setattr("app.bot.handlers.admin.CapitalRaidReportService.build_latest_weekend_report", AsyncMock(return_value="🏰 report"))
+    from tests.fakes import FakeState
+
     message = FakeMessage(text="🏰 Столица", user_id=1)
-    await capital_raid_report(message, app_context)
-    assert message.answer.await_args_list[0].args[0] == "🏰 report"
+    await capital_raid_report_start(message, FakeState(), app_context)
+    assert "Введите, за сколько последних рейдов" in message.answer.await_args_list[0].args[0]
 
 
 @pytest.mark.asyncio
 async def test_capital_button_handler_denies_non_admin(app_context):
+    from tests.fakes import FakeState
+
     message = FakeMessage(text="🏰 Столица", user_id=999)
-    await capital_raid_report(message, app_context)
+    await capital_raid_report_start(message, FakeState(), app_context)
     assert "⛔ Недостаточно прав" in message.answer.await_args.args[0]
 
 
