@@ -7,7 +7,7 @@ from typing import Any
 import aiohttp
 from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from app.schemas.dto import CWLGroupDTO, ClanMemberDTO, PlayerProfileDTO, WarDTO
+from app.schemas.dto import CWLGroupDTO, CapitalRaidSeasonDTO, ClanMemberDTO, PlayerProfileDTO, WarDTO
 from app.utils.tag import encode_tag
 
 logger = logging.getLogger(__name__)
@@ -44,6 +44,10 @@ class ClashApiClient(ABC):
 
     @abstractmethod
     async def get_cwl_war(self, war_tag: str, *, clan_tag: str, league_group_id: str, season: str, round_index: int) -> WarDTO:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_capital_raid_seasons(self, clan_tag: str, limit: int = 10) -> list[CapitalRaidSeasonDTO]:
         raise NotImplementedError
 
 
@@ -160,3 +164,9 @@ class HttpClashApiClient(ClashApiClient):
             season=season,
             round_index=round_index,
         )
+
+
+    async def get_capital_raid_seasons(self, clan_tag: str, limit: int = 10) -> list[CapitalRaidSeasonDTO]:
+        payload = await self._request("GET", f"/clans/{encode_tag(clan_tag)}/capitalraidseasons?limit={limit}")
+        items = payload.get("items", []) if payload else []
+        return [CapitalRaidSeasonDTO.model_validate(item) for item in items]

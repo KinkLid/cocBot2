@@ -9,6 +9,7 @@ from app.container import AppContext, send_text_via_bot
 from app.services.clan_sync import ClanSyncService
 from app.services.notifications import AdminNotifier
 from app.services.war_sync import WarSyncService
+from app.services.capital_raid_sync import CapitalRaidSyncService
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ async def sync_wars(app_context: AppContext, sender: Callable[[int, str], Awaita
     async with app_context.session_maker() as session:
         notifier = AdminNotifier(session, app_context.config, sender)
         await WarSyncService(session, app_context.clash_client, app_context.config, notifier).sync_all()
+        await CapitalRaidSyncService(session, app_context.clash_client, app_context.config).sync_finished()
 
 
 async def housekeeping(app_context: AppContext) -> None:

@@ -22,6 +22,7 @@ class PlayerProfileDTO(BaseModel):
     town_hall: int = Field(default=1, alias="townHallLevel")
     donations: int = 0
     donations_received: int = Field(default=0, alias="donationsReceived")
+    clan_capital_contributions: int | None = Field(default=None, alias="clanCapitalContributions")
 
     model_config = {"populate_by_name": True}
 
@@ -140,3 +141,28 @@ class PlayerExportDTO(BaseModel):
     violations: int
     place: int
     participation: list[WarParticipationExportDTO] = Field(default_factory=list)
+
+
+class CapitalRaidParticipantDTO(BaseModel):
+    tag: str
+    name: str
+    attacks: int = 0
+    attack_limit: int = Field(default=0, alias="attackLimit")
+    bonus_attacks: int = Field(default=0, alias="bonusAttackLimit")
+    capital_resources_looted: int = Field(default=0, alias="capitalResourcesLooted")
+
+    model_config = {"populate_by_name": True}
+
+
+class CapitalRaidSeasonDTO(BaseModel):
+    state: str
+    start_time: str | None = Field(default=None, alias="startTime")
+    end_time: str | None = Field(default=None, alias="endTime")
+    total_loot: int = Field(default=0, alias="capitalTotalLoot")
+    total_attacks: int = Field(default=0, alias="raidsCompleted")
+    enemy_districts_destroyed: int = Field(default=0, alias="enemyDistrictsDestroyed")
+    offensive_reward: int = Field(default=0, alias="offensiveReward")
+    defensive_reward: int = Field(default=0, alias="defensiveReward")
+    members: list[CapitalRaidParticipantDTO] = Field(default_factory=list)
+
+    model_config = {"populate_by_name": True}
