@@ -62,6 +62,39 @@ class PlayerAccountRepository:
         await self.session.flush()
         return player
 
+    async def upsert_player_profile(
+        self,
+        *,
+        player_tag: str,
+        name: str,
+        town_hall: int,
+        now: datetime,
+    ) -> PlayerAccount:
+        player = await self.get_by_tag(player_tag)
+        if player is None:
+            player = PlayerAccount(
+                player_tag=player_tag,
+                name=name,
+                town_hall=town_hall,
+                current_clan_tag=None,
+                current_clan_name=None,
+                current_clan_rank=None,
+                current_in_clan=False,
+                last_seen_in_clan_at=None,
+                first_absent_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+            self.session.add(player)
+            await self.session.flush()
+            return player
+
+        player.name = name
+        player.town_hall = town_hall
+        player.updated_at = now
+        await self.session.flush()
+        return player
+
     async def mark_absent(self, player: PlayerAccount, now: datetime) -> None:
         player.current_in_clan = False
         player.current_clan_tag = None
