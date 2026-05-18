@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import CapitalRaidParticipant, CapitalRaidWeekend
@@ -69,3 +69,12 @@ class CapitalRaidRepository:
             select(CapitalRaidParticipant).where(CapitalRaidParticipant.weekend_id.in_(weekend_ids))
         )
         return list(res.scalars())
+
+    async def count_completed_weekends(self, clan_tag: str) -> int:
+        res = await self.session.execute(
+            select(func.count(CapitalRaidWeekend.id)).where(
+                CapitalRaidWeekend.clan_tag == clan_tag,
+                CapitalRaidWeekend.end_time.is_not(None),
+            )
+        )
+        return int(res.scalar_one())
