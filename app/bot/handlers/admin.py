@@ -230,16 +230,20 @@ async def manual_claimed_target_player_selected(message: Message, state: FSMCont
     if idx < 1 or idx > len(options):
         await message.answer("⚠️ Нет игрока с таким номером.")
         return
-    selected = options[idx - 1]
-    async with app_context.session_maker() as session:
-        service = ManualViolationService(session, app_context.config)
-        attacks = await service.list_player_attacks_for_current_cycle(selected["player_tag"])
-        if not attacks:
-            await message.answer("⚠️ У этого игрока нет атак в текущем цикле.")
-            return
-        await state.update_data(selected_player=selected, attack_options=[{"attack_id": a.id} for a, _, _ in attacks])
-        await state.set_state(ManualViolationStates.awaiting_claimed_target_attack)
-        await message.answer(service.format_attacks_for_selection(selected["player_name"], attacks))
+    try:
+        selected = options[idx - 1]
+        async with app_context.session_maker() as session:
+            service = ManualViolationService(session, app_context.config)
+            attacks = await service.list_player_attacks_for_current_cycle(selected["player_tag"])
+            if not attacks:
+                await message.answer("⚠️ У этого игрока нет атак в текущем цикле.")
+                return
+            await state.update_data(selected_player=selected, attack_options=[{"attack_id": a.id} for a, _, _ in attacks])
+            await state.set_state(ManualViolationStates.awaiting_claimed_target_attack)
+            await message.answer(service.format_attacks_for_selection(selected["player_name"], attacks))
+    except Exception:
+        logger.exception("Failed to load attacks for manual claimed_target selection")
+        await message.answer("⚠️ Не удалось загрузить атаки игрока. Попробуйте позже.")
 
 
 @router.message(ManualViolationStates.awaiting_claimed_target_attack)
@@ -272,13 +276,18 @@ async def manual_claimed_target_attack_selected(message: Message, state: FSMCont
     if idx < 1 or idx > len(options):
         await message.answer("⚠️ Нет атаки с таким номером.")
         return
-    attack_id = options[idx - 1]["attack_id"]
-    async with app_context.session_maker() as session:
-        service = ManualViolationService(session, app_context.config)
-        confirm_text = await service.apply_claimed_target_violation(attack_id, admin_telegram_id=message.from_user.id)
-        await session.commit()
-    await state.clear()
-    await message.answer(confirm_text)
+    try:
+        attack_id = options[idx - 1]["attack_id"]
+        async with app_context.session_maker() as session:
+            service = ManualViolationService(session, app_context.config)
+            confirm_text = await service.apply_claimed_target_violation(attack_id, admin_telegram_id=message.from_user.id)
+            await session.commit()
+        await state.clear()
+        await message.answer(confirm_text)
+    except Exception:
+        logger.exception("Failed to apply manual claimed_target violation")
+        await state.clear()
+        await message.answer("⚠️ Не удалось поставить нарушение. Попробуйте позже.")
 
 
 @router.message(F.text == "🏰 Столица")

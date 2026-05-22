@@ -17,7 +17,14 @@ class Violation(Base):
     attack_id: Mapped[int] = mapped_column(ForeignKey("attacks.id", ondelete="CASCADE"), index=True)
     war_id: Mapped[int] = mapped_column(ForeignKey("wars.id", ondelete="CASCADE"), index=True)
     player_tag: Mapped[str] = mapped_column(String(20), index=True)
-    code: Mapped[ViolationCode] = mapped_column(Enum(ViolationCode))
+    code: Mapped[ViolationCode] = mapped_column(
+        Enum(
+            ViolationCode,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            native_enum=False,
+            validate_strings=True,
+        )
+    )
     reason_text: Mapped[str] = mapped_column(String(255))
     player_position: Mapped[int] = mapped_column(Integer)
     target_position: Mapped[int] = mapped_column(Integer)

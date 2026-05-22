@@ -123,3 +123,85 @@ async def test_warsync_does_not_touch_manual_violation(session, fake_clash_clien
     v = await session.scalar(select(Violation).where(Violation.attack_id == attack.id))
     assert v.code == ViolationCode.CLAIMED_TARGET
     assert v.is_manual is True
+
+
+@pytest.mark.asyncio
+async def test_violation_enum_mapping_reads_lowercase_above_self(session):
+    now = datetime(2026, 5, 20, 10, 0, tzinfo=UTC)
+    war = War(war_uid="w5", clan_tag="#CLAN", clan_name="T", opponent_tag="#E", opponent_name="E", war_type=WarType.REGULAR, state="in_war", league_group_id=None, cwl_season=None, round_index=None, team_size=15, is_friendly=False, start_time=now - timedelta(hours=1), end_time=now + timedelta(hours=1), preparation_start_time=now - timedelta(hours=23), source_payload={})
+    session.add(war)
+    await session.flush()
+    attack = Attack(war_id=war.id, attacker_player_id=None, attacker_tag="#P5", attacker_name="Alpha", attacker_position=10, attacker_town_hall=16, defender_tag="#E5", defender_name="Enemy5", defender_position=9, defender_town_hall=16, stars=2, destruction=80, attack_order=1, observed_at=now)
+    session.add(attack)
+    await session.flush()
+    await session.execute(
+        Violation.__table__.insert().values(
+            attack_id=attack.id,
+            war_id=war.id,
+            player_tag="#P5",
+            code="above_self",
+            reason_text="x",
+            player_position=10,
+            target_position=9,
+            detected_at=now,
+            is_manual=False,
+        )
+    )
+    await session.commit()
+
+    violation = await session.scalar(select(Violation).where(Violation.attack_id == attack.id))
+    assert violation is not None
+    assert violation.code == ViolationCode.ABOVE_SELF
+
+
+@pytest.mark.asyncio
+async def test_violation_enum_mapping_claimed_target_roundtrip(session):
+    now = datetime(2026, 5, 20, 10, 0, tzinfo=UTC)
+    war = War(war_uid="w6", clan_tag="#CLAN", clan_name="T", opponent_tag="#E", opponent_name="E", war_type=WarType.REGULAR, state="in_war", league_group_id=None, cwl_season=None, round_index=None, team_size=15, is_friendly=False, start_time=now - timedelta(hours=1), end_time=now + timedelta(hours=1), preparation_start_time=now - timedelta(hours=23), source_payload={})
+    session.add(war)
+    await session.flush()
+    attack = Attack(war_id=war.id, attacker_player_id=None, attacker_tag="#P6", attacker_name="Beta", attacker_position=11, attacker_town_hall=16, defender_tag="#E6", defender_name="Enemy6", defender_position=8, defender_town_hall=16, stars=3, destruction=100, attack_order=1, observed_at=now)
+    session.add(attack)
+    await session.flush()
+    session.add(Violation(attack_id=attack.id, war_id=war.id, player_tag="#P6", code=ViolationCode.CLAIMED_TARGET, reason_text="manual", player_position=11, target_position=8, detected_at=now, is_manual=True))
+    await session.commit()
+
+    violation = await session.scalar(select(Violation).where(Violation.attack_id == attack.id))
+    assert violation is not None
+    assert violation.code == ViolationCode.CLAIMED_TARGET
+
+
+@pytest.mark.asyncio
+async def test_manual_claimed_target_player_selected_returns_error_on_service_exception(monkeypatch, app_context):
+    state = FakeState()
+    await state.set_state(ManualViolationStates.awaiting_claimed_target_player)
+    await state.update_data(player_options=[{"player_tag": "#P2", "player_name": "Alpha"}])
+
+    async def _raise(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(ManualViolationService, "list_player_attacks_for_current_cycle", _raise)
+
+    message = FakeMessage(text="1", user_id=1)
+    await manual_claimed_target_player_selected(message, state, app_context)
+
+    assert message.answer.await_args.args[0] == "⚠️ Не удалось загрузить атаки игрока. Попробуйте позже."
+    assert state.state == str(ManualViolationStates.awaiting_claimed_target_player)
+
+
+@pytest.mark.asyncio
+async def test_manual_claimed_target_attack_selected_returns_error_and_clears_state(monkeypatch, app_context):
+    state = FakeState()
+    await state.set_state(ManualViolationStates.awaiting_claimed_target_attack)
+    await state.update_data(attack_options=[{"attack_id": 123}])
+
+    async def _raise(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(ManualViolationService, "apply_claimed_target_violation", _raise)
+
+    message = FakeMessage(text="1", user_id=1)
+    await manual_claimed_target_attack_selected(message, state, app_context)
+
+    assert message.answer.await_args.args[0] == "⚠️ Не удалось поставить нарушение. Попробуйте позже."
+    assert state.state is None
