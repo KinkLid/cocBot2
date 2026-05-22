@@ -12,6 +12,7 @@ from app.bot.handlers.admin import (
     admin_players_sort,
     capital_raid_report_start,
     current_cycle_violations,
+    violation_player_selected,
     dev_contribution,
     download_log_file,
     last_logs,
@@ -25,6 +26,7 @@ from app.services.export import ExportService
 from app.services.period import PeriodService
 from app.services.stats import FormattedStats, StatsService
 from tests.fakes import FakeCallback, FakeMessage, FakeState
+from app.bot.states.violations import ViolationStates
 from tests.test_stats import seed_stats_data
 
 
@@ -210,7 +212,7 @@ async def test_message_too_long_error_no_longer_reproduced_in_admin_callback(app
 @pytest.mark.asyncio
 async def test_current_cycle_violations_is_admin_only(app_context):
     message = FakeMessage(text="🚨 Нарушения", user_id=999)
-    await current_cycle_violations(message, app_context)
+    await current_cycle_violations(message, FakeState(), app_context)
     assert "Недостаточно прав" in message.answer.await_args.args[0]
 
 
@@ -226,5 +228,69 @@ async def test_current_cycle_violations_handler_always_replies(app_context, monk
     monkeypatch.setattr(StatsService, "violations_ranking_current_cycle", fake_ranking)
 
     message = FakeMessage(text="🚨 Нарушения", user_id=1)
-    await current_cycle_violations(message, app_context)
+    await current_cycle_violations(message, FakeState(), app_context)
     message.answer.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_current_cycle_violations_sets_state_when_ranked(app_context, monkeypatch):
+    async def fake_current_cycle(self):
+        return SimpleNamespace(start=datetime(2026, 4, 1, 0, tzinfo=UTC), end=datetime(2026, 4, 2, 0, tzinfo=UTC))
+
+    async def fake_data(self, period_start, period_end):
+        return [{"player_tag": "#P1", "player_name": "Lester", "violations": 2}]
+
+    async def fake_text(self, period_start, period_end):
+        return "🚨 Нарушения за текущий цикл\n\n1. Lester — 2"
+
+    monkeypatch.setattr(PeriodService, "current_cycle", fake_current_cycle)
+    monkeypatch.setattr(StatsService, "violations_ranking_current_cycle_data", fake_data)
+    monkeypatch.setattr(StatsService, "violations_ranking_current_cycle", fake_text)
+
+    message = FakeMessage(text="🚨 Нарушения", user_id=1)
+    state = FakeState()
+    await current_cycle_violations(message, state, app_context)
+    assert state.state == str(ViolationStates.awaiting_violation_player_number)
+    assert (await state.get_data())["violation_player_options"][0]["player_tag"] == "#P1"
+
+
+@pytest.mark.asyncio
+async def test_violation_player_selected_validation_and_back(app_context):
+    state = FakeState()
+    await state.set_state(ViolationStates.awaiting_violation_player_number)
+    await state.update_data(violation_player_options=[{"player_tag": "#P1", "player_name": "Lester", "violations": 2}])
+
+    bad = FakeMessage(text="abc", user_id=1)
+    await violation_player_selected(bad, state, app_context)
+    assert "Введите номер" in bad.answer.await_args.args[0]
+    assert state.state == str(ViolationStates.awaiting_violation_player_number)
+
+    out = FakeMessage(text="9", user_id=1)
+    await violation_player_selected(out, state, app_context)
+    assert "Нет игрока" in out.answer.await_args.args[0]
+
+    back = FakeMessage(text="⬅️ Назад", user_id=1)
+    await violation_player_selected(back, state, app_context)
+    assert state.state is None
+    assert "Главное меню" in back.answer.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_violation_player_selected_success(app_context, monkeypatch):
+    async def fake_current_cycle(self):
+        return SimpleNamespace(start=datetime(2026, 4, 1, 0, tzinfo=UTC), end=datetime(2026, 4, 2, 0, tzinfo=UTC))
+
+    async def fake_report(self, period_start, period_end, player_tag, player_name):
+        return "🚨 Нарушения игрока: Lester\n\n1. 2026-05-14 08:18 | КВ | 10 -> 8\nКод: above_self\nПричина: test"
+
+    monkeypatch.setattr(PeriodService, "current_cycle", fake_current_cycle)
+    monkeypatch.setattr(StatsService, "build_player_violations_report", fake_report)
+
+    state = FakeState()
+    await state.set_state(ViolationStates.awaiting_violation_player_number)
+    await state.update_data(violation_player_options=[{"player_tag": "#P1", "player_name": "Lester", "violations": 2}])
+
+    message = FakeMessage(text="1", user_id=1)
+    await violation_player_selected(message, state, app_context)
+    assert state.state is None
+    assert "Нарушения игрока" in message.answer.await_args_list[0].args[0]
