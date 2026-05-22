@@ -364,12 +364,12 @@ async def test_build_player_violations_report_formats_details_and_claimed_target
             (
                 SimpleNamespace(detected_at=datetime(2026, 5, 14, 8, 18, tzinfo=UTC), code=ViolationCode.ABOVE_SELF, reason_text="Атака выше"),
                 SimpleNamespace(attacker_position=10, defender_position=8),
-                SimpleNamespace(type=WarType.REGULAR),
+                SimpleNamespace(war_type=WarType.REGULAR),
             ),
             (
                 SimpleNamespace(detected_at=datetime(2026, 5, 16, 9, 52, tzinfo=UTC), code=ViolationCode.CLAIMED_TARGET, reason_text="Атака по чужому флажку"),
                 SimpleNamespace(attacker_position=10, defender_position=23),
-                SimpleNamespace(type=WarType.CWL),
+                SimpleNamespace(war_type=WarType.CWL),
             ),
         ]
 

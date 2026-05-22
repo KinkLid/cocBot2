@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import AppYamlConfig
+from app.models.enums import WarType
 from app.repositories.stats import StatsRepository
 from app.repositories.war import WarRepository
 from app.schemas.dto import PlayerStatsDTO
@@ -175,7 +176,7 @@ class StatsService:
 
         lines = [f"🚨 Нарушения игрока: {player_name}", ""]
         for idx, (violation, attack, war) in enumerate(rows, 1):
-            war_type = "ЛВК" if war.type.value == "cwl" else "КВ"
+            war_type = "ЛВК" if war.war_type == WarType.CWL else "КВ"
             lines.append(
                 f"{idx}. {violation.detected_at:%Y-%m-%d %H:%M} | {war_type} | {attack.attacker_position} -> {attack.defender_position}"
             )
