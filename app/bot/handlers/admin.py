@@ -17,6 +17,7 @@ from app.container import AppContext
 from app.services.clan_chat import ClanChatService
 from app.services.capital_raid_report import CapitalRaidReportService
 from app.services.capital_raid_contribution import CapitalRaidContributionService
+from app.services.capital_raid_sync import CapitalRaidSyncService
 from app.services.dev_contribution import ContributionDataUnavailableError, DevContributionService
 from app.services.donations import DonationService
 from app.services.export import ExportService
@@ -186,9 +187,10 @@ async def dev_capital(message: Message, app_context: AppContext) -> None:
     try:
         async with app_context.session_maker() as session:
             period = await PeriodService(session).current_cycle()
+            await CapitalRaidSyncService(session, app_context.clash_client, app_context.config).repair_current_cycle_missing_participants(period)
             service = CapitalRaidContributionService(session, app_context.config)
-            ranking, destroy_stats_available = await service.build_current_cycle_ranking(period)
-            text = service.format_current_cycle_ranking(period, ranking, destroy_stats_available)
+            ranking, destroy_stats_available, stats, _ = await service.build_current_cycle_ranking(period)
+            text = service.format_current_cycle_ranking(period, ranking, destroy_stats_available, stats)
         await send_long_message(message, text)
     except Exception:
         logger.exception("Failed to build dev capital contribution report")

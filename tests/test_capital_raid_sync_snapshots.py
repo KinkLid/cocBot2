@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select
@@ -121,3 +123,44 @@ async def test_sync_finished_backfills_existing_weekend_without_participants(ses
     await service.sync_finished()
     count = await session.scalar(select(func.count()).select_from(PlayerCapitalContributionSnapshot))
     assert count == 2
+
+
+@pytest.mark.asyncio
+async def test_repair_current_cycle_missing_participants_backfills(session, fake_clash_client, app_yaml_config):
+    from app.models import CapitalRaidWeekend
+
+    weekend = CapitalRaidWeekend(
+        clan_tag="#CLAN",
+        raid_season_id="20260510T000000.000Z:20260512T000000.000Z",
+        state="ended",
+        start_time=datetime(2026, 5, 10, tzinfo=UTC),
+        end_time=datetime(2026, 5, 12, tzinfo=UTC),
+        total_loot=0,
+        total_attacks=0,
+        enemy_districts_destroyed=0,
+        offensive_reward=0,
+        defensive_reward=0,
+        processed_at=datetime(2026, 5, 13, tzinfo=UTC),
+    )
+    session.add(weekend)
+    await session.commit()
+
+    async def _seasons(clan_tag, limit=10):
+        return [
+            CapitalRaidSeasonDTO(
+                state="ended",
+                startTime="20260510T000000.000Z",
+                endTime="20260512T000000.000Z",
+                members=[CapitalRaidParticipantDTO(tag="#P1", name="P1", attacks=6, attackLimit=6, bonusAttackLimit=1, capitalResourcesLooted=1000, districtsDestroyed=2)],
+            )
+        ]
+
+    fake_clash_client.get_capital_raid_seasons = _seasons
+    fake_clash_client.players["#P1"] = PlayerProfileDTO(tag="#P1", name="P1", townHallLevel=16, clanCapitalContributions=777)
+
+    period = SimpleNamespace(start=datetime(2026, 5, 1, tzinfo=UTC), end=datetime(2026, 5, 30, tzinfo=UTC))
+    service = CapitalRaidSyncService(session, fake_clash_client, app_yaml_config)
+    await service.repair_current_cycle_missing_participants(period)
+
+    participants = await service.repo.list_participants_for_period("#CLAN", period.start, period.end)
+    assert len(participants) == 1

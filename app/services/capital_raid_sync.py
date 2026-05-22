@@ -121,3 +121,73 @@ class CapitalRaidSyncService:
                 ended_from_api,
                 count_db_completed,
             )
+
+    async def repair_current_cycle_missing_participants(self, period) -> None:
+        now = utcnow()
+        upper_bound = min(period.end, now)
+        weekends = await self.repo.list_weekends_for_period(self.config.main_clan_tag, period.start, upper_bound)
+        empty_weekends = []
+        for weekend in weekends:
+            if await self.repo.count_participants_for_weekend(weekend.id) == 0:
+                empty_weekends.append(weekend)
+        if not empty_weekends:
+            logger.info("Capital raid repair: empty_weekends=0, backfilled=0, participants_saved=0")
+            return
+
+        seasons = await self.client.get_capital_raid_seasons(self.config.main_clan_tag, limit=10)
+        ended = {}
+        for season in seasons:
+            end_time = parse_coc_time(season.end_time)
+            if end_time is None or end_time > now:
+                continue
+            raid_season_id = f"{season.start_time or 'unknown'}:{season.end_time or 'unknown'}"
+            ended[raid_season_id] = season
+
+        backfilled = 0
+        participants_saved = 0
+        snapshots_saved = 0
+        for weekend in empty_weekends:
+            season = ended.get(weekend.raid_season_id)
+            if season is None:
+                continue
+            participants = []
+            for m in season.members:
+                participants_saved += 1
+                player = await self.players.get_by_tag(m.tag)
+                snapshot = None
+                try:
+                    profile = await self.client.get_player(m.tag)
+                    snapshot = getattr(profile, "clan_capital_contributions", None)
+                except Exception:
+                    snapshot = None
+                participants.append(CapitalRaidParticipant(
+                    weekend_id=weekend.id,
+                    player_id=player.id if player else None,
+                    player_tag=m.tag,
+                    player_name=m.name,
+                    attacks=m.attacks,
+                    attack_limit=m.attack_limit,
+                    bonus_attacks=m.bonus_attacks,
+                    districts_destroyed=m.districts_destroyed,
+                    capital_resources_looted=m.capital_resources_looted,
+                    clan_capital_contributions_snapshot=snapshot,
+                ))
+                if snapshot is not None:
+                    await self.snapshots.add(
+                        player_tag=m.tag,
+                        clan_tag=self.config.main_clan_tag,
+                        observed_at=weekend.processed_at,
+                        value=snapshot,
+                    )
+                    snapshots_saved += 1
+            await self.repo.replace_participants(weekend.id, participants)
+            backfilled += 1
+
+        await self.session.commit()
+        logger.info(
+            "Capital raid repair: empty_weekends=%s, backfilled=%s, participants_saved=%s, snapshots_saved=%s",
+            len(empty_weekends),
+            backfilled,
+            participants_saved,
+            snapshots_saved,
+        )
