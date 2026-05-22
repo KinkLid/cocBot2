@@ -192,6 +192,8 @@ class WarSyncService:
             defender_position=attack.defender_position,
         )
         violation = await self.wars.get_violation_by_attack_id(attack.id)
+        if violation is not None and violation.is_manual is True:
+            return
 
         if not decision.violated or decision.code is None or decision.reason_text is None:
             if violation is not None:
@@ -209,6 +211,7 @@ class WarSyncService:
                     player_position=attack.attacker_position,
                     target_position=attack.defender_position,
                     detected_at=attack.observed_at,
+                    is_manual=False,
                 )
             )
             current_cycle = await self.period_service.current_cycle(attack.observed_at)

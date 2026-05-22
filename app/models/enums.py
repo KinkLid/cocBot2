@@ -18,6 +18,7 @@ class WarState(str, enum.Enum):
 class ViolationCode(str, enum.Enum):
     ABOVE_SELF = "above_self"
     TOO_LOW = "too_low"
+    CLAIMED_TARGET = "claimed_target"
 
 
 class PeriodKind(str, enum.Enum):

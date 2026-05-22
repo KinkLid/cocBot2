@@ -11,6 +11,7 @@ from app.bot.keyboards.main import main_menu
 from app.bot.states.capital import CapitalRaidStates
 from app.bot.utils.telegram_text import edit_or_send_long_message, send_long_message
 from app.bot.states.chat_link import ChatLinkStates
+from app.bot.states.manual_violation import ManualViolationStates
 from app.container import AppContext
 from app.services.clan_chat import ClanChatService
 from app.services.capital_raid_report import CapitalRaidReportService
@@ -19,6 +20,7 @@ from app.services.donations import DonationService
 from app.services.export import ExportService
 from app.services.period import PeriodService
 from app.services.registration import RegistrationService
+from app.services.manual_violation import ManualViolationService
 from app.services.stats import StatsService
 
 router = Router(name="admin")
@@ -184,6 +186,99 @@ async def current_cycle_violations(message: Message, app_context: AppContext) ->
         service = StatsService(session, app_context.config)
         text = await service.violations_ranking_current_cycle(period.start, period.end)
     await send_long_message(message, text)
+
+
+@router.message(F.text == "🚩 Чужой флажок")
+async def manual_claimed_target_start(message: Message, state: FSMContext, app_context: AppContext) -> None:
+    try:
+        _ensure_admin(app_context, message.from_user.id)
+    except PermissionError:
+        await message.answer("⛔ Недостаточно прав")
+        return
+    async with app_context.session_maker() as session:
+        service = ManualViolationService(session, app_context.config)
+        players = await service.list_players_with_attacks_for_current_cycle()
+        if not players:
+            await message.answer("⚠️ В текущем цикле нет игроков с атаками.")
+            return
+        await state.update_data(player_options=[{"player_tag": p.player_tag, "player_name": p.player_name} for p in players])
+        await state.set_state(ManualViolationStates.awaiting_claimed_target_player)
+        await message.answer(service.format_players_for_selection(players))
+
+
+@router.message(ManualViolationStates.awaiting_claimed_target_player)
+async def manual_claimed_target_player_selected(message: Message, state: FSMContext, app_context: AppContext) -> None:
+    try:
+        _ensure_admin(app_context, message.from_user.id)
+    except PermissionError:
+        await message.answer("⛔ Недостаточно прав")
+        return
+    text = (message.text or "").strip()
+    if text == "⬅️ Назад":
+        await state.clear()
+        async with app_context.session_maker() as session:
+            is_registered = await RegistrationService(session, app_context.clash_client).is_registered(message.from_user.id)
+        await message.answer("Главное меню", reply_markup=main_menu(True, is_registered))
+        return
+    try:
+        idx = int(text)
+    except ValueError:
+        await message.answer("⚠️ Введите номер игрока из списка.")
+        return
+    data = await state.get_data()
+    options = data.get("player_options", [])
+    if idx < 1 or idx > len(options):
+        await message.answer("⚠️ Нет игрока с таким номером.")
+        return
+    selected = options[idx - 1]
+    async with app_context.session_maker() as session:
+        service = ManualViolationService(session, app_context.config)
+        attacks = await service.list_player_attacks_for_current_cycle(selected["player_tag"])
+        if not attacks:
+            await message.answer("⚠️ У этого игрока нет атак в текущем цикле.")
+            return
+        await state.update_data(selected_player=selected, attack_options=[{"attack_id": a.id} for a, _, _ in attacks])
+        await state.set_state(ManualViolationStates.awaiting_claimed_target_attack)
+        await message.answer(service.format_attacks_for_selection(selected["player_name"], attacks))
+
+
+@router.message(ManualViolationStates.awaiting_claimed_target_attack)
+async def manual_claimed_target_attack_selected(message: Message, state: FSMContext, app_context: AppContext) -> None:
+    try:
+        _ensure_admin(app_context, message.from_user.id)
+    except PermissionError:
+        await message.answer("⛔ Недостаточно прав")
+        return
+    text = (message.text or "").strip()
+    data = await state.get_data()
+    if text == "⬅️ Назад":
+        async with app_context.session_maker() as session:
+            service = ManualViolationService(session, app_context.config)
+            players_live = await service.list_players_with_attacks_for_current_cycle()
+            await state.update_data(player_options=[{"player_tag": p.player_tag, "player_name": p.player_name} for p in players_live], attack_options=[])
+            await state.set_state(ManualViolationStates.awaiting_claimed_target_player)
+            if not players_live:
+                await state.clear()
+                await message.answer("⚠️ В текущем цикле нет игроков с атаками.")
+                return
+            await message.answer(service.format_players_for_selection(players_live))
+        return
+    try:
+        idx = int(text)
+    except ValueError:
+        await message.answer("⚠️ Введите номер атаки из списка.")
+        return
+    options = data.get("attack_options", [])
+    if idx < 1 or idx > len(options):
+        await message.answer("⚠️ Нет атаки с таким номером.")
+        return
+    attack_id = options[idx - 1]["attack_id"]
+    async with app_context.session_maker() as session:
+        service = ManualViolationService(session, app_context.config)
+        confirm_text = await service.apply_claimed_target_violation(attack_id, admin_telegram_id=message.from_user.id)
+        await session.commit()
+    await state.clear()
+    await message.answer(confirm_text)
 
 
 @router.message(F.text == "🏰 Столица")

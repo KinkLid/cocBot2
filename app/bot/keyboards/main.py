@@ -23,6 +23,7 @@ def main_menu(is_admin: bool, is_registered: bool) -> ReplyKeyboardMarkup:
                 [KeyboardButton(text="🏰 Столица")],
                 [KeyboardButton(text="🧪 Dev-донаты")],
                 [KeyboardButton(text="🚨 Нарушения")],
+                [KeyboardButton(text="🚩 Чужой флажок")],
                 [KeyboardButton(text="✏️ Обновить ссылку на чат")],
                 [KeyboardButton(text="📜 Последние логи")],
                 [KeyboardButton(text="🗂 Скачать лог-файл")],
