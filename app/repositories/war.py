@@ -82,6 +82,22 @@ class WarRepository:
         )
         return list(result.all())
 
+
+    async def list_player_violations_in_period(self, clan_tag: str, player_tag: str, period_start, period_end) -> list[tuple[Violation, Attack, War]]:
+        result = await self.session.execute(
+            select(Violation, Attack, War)
+            .join(Attack, Violation.attack_id == Attack.id)
+            .join(War, Violation.war_id == War.id)
+            .where(
+                War.clan_tag == clan_tag,
+                Violation.player_tag == player_tag,
+                Violation.detected_at >= period_start,
+                Violation.detected_at <= period_end,
+            )
+            .order_by(Violation.detected_at.asc())
+        )
+        return list(result.all())
+
     async def get_violation_by_attack_id(self, attack_id: int) -> Violation | None:
         result = await self.session.execute(select(Violation).where(Violation.attack_id == attack_id))
         return result.scalar_one_or_none()

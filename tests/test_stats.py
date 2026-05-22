@@ -333,3 +333,54 @@ async def test_violations_ranking_current_cycle_empty(session, app_yaml_config):
 
     stats = await StatsService(session, app_yaml_config).player_stats(datetime(2026, 4, 1, 0, tzinfo=UTC), datetime(2026, 4, 2, 23, tzinfo=UTC), "#P2")
     assert stats.place == 0
+
+
+@pytest.mark.asyncio
+async def test_build_player_violations_report_empty(session, app_yaml_config, monkeypatch):
+    service = StatsService(session, app_yaml_config)
+
+    async def fake_list(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr(service.war_repo, "list_player_violations_in_period", fake_list)
+    text = await service.build_player_violations_report(
+        datetime(2026, 4, 1, 0, tzinfo=UTC),
+        datetime(2026, 4, 2, 23, tzinfo=UTC),
+        "#P1",
+        "Lester",
+    )
+    assert text == "✅ У игрока Lester нет нарушений за текущий цикл."
+
+
+@pytest.mark.asyncio
+async def test_build_player_violations_report_formats_details_and_claimed_target(session, app_yaml_config, monkeypatch):
+    from types import SimpleNamespace
+    from app.models.enums import WarType, ViolationCode
+
+    service = StatsService(session, app_yaml_config)
+
+    async def fake_list(*_args, **_kwargs):
+        return [
+            (
+                SimpleNamespace(detected_at=datetime(2026, 5, 14, 8, 18, tzinfo=UTC), code=ViolationCode.ABOVE_SELF, reason_text="Атака выше"),
+                SimpleNamespace(attacker_position=10, defender_position=8),
+                SimpleNamespace(type=WarType.REGULAR),
+            ),
+            (
+                SimpleNamespace(detected_at=datetime(2026, 5, 16, 9, 52, tzinfo=UTC), code=ViolationCode.CLAIMED_TARGET, reason_text="Атака по чужому флажку"),
+                SimpleNamespace(attacker_position=10, defender_position=23),
+                SimpleNamespace(type=WarType.CWL),
+            ),
+        ]
+
+    monkeypatch.setattr(service.war_repo, "list_player_violations_in_period", fake_list)
+    text = await service.build_player_violations_report(
+        datetime(2026, 4, 1, 0, tzinfo=UTC),
+        datetime(2026, 4, 2, 23, tzinfo=UTC),
+        "#P1",
+        "Lester",
+    )
+    assert "2026-05-14 08:18 | КВ | 10 -> 8" in text
+    assert "2026-05-16 09:52 | ЛВК | 10 -> 23" in text
+    assert "Код: claimed_target" in text
+    assert "Причина: Атака по чужому флажку" in text

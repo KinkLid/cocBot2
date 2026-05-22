@@ -12,6 +12,7 @@ from app.bot.states.capital import CapitalRaidStates
 from app.bot.utils.telegram_text import edit_or_send_long_message, send_long_message
 from app.bot.states.chat_link import ChatLinkStates
 from app.bot.states.manual_violation import ManualViolationStates
+from app.bot.states.violations import ViolationStates
 from app.container import AppContext
 from app.services.clan_chat import ClanChatService
 from app.services.capital_raid_report import CapitalRaidReportService
@@ -175,7 +176,7 @@ async def dev_donations(message: Message, app_context: AppContext) -> None:
 
 
 @router.message(F.text == "🚨 Нарушения")
-async def current_cycle_violations(message: Message, app_context: AppContext) -> None:
+async def current_cycle_violations(message: Message, state: FSMContext, app_context: AppContext) -> None:
     try:
         _ensure_admin(app_context, message.from_user.id)
     except PermissionError:
@@ -184,8 +185,63 @@ async def current_cycle_violations(message: Message, app_context: AppContext) ->
     async with app_context.session_maker() as session:
         period = await PeriodService(session).current_cycle()
         service = StatsService(session, app_context.config)
+        options = await service.violations_ranking_current_cycle_data(period.start, period.end)
         text = await service.violations_ranking_current_cycle(period.start, period.end)
-    await send_long_message(message, text)
+    if not options:
+        await send_long_message(message, text)
+        return
+
+    await state.update_data(violation_player_options=options)
+    await state.set_state(ViolationStates.awaiting_violation_player_number)
+    await send_long_message(message, text + "\n\nВведите номер игрока, чтобы посмотреть его нарушения.\nИли нажмите ⬅️ Назад.")
+
+
+@router.message(ViolationStates.awaiting_violation_player_number)
+async def violation_player_selected(message: Message, state: FSMContext, app_context: AppContext) -> None:
+    try:
+        _ensure_admin(app_context, message.from_user.id)
+    except PermissionError:
+        await message.answer("⛔ Недостаточно прав")
+        await state.clear()
+        return
+
+    text = (message.text or "").strip()
+    if text == "⬅️ Назад":
+        await state.clear()
+        async with app_context.session_maker() as session:
+            is_registered = await RegistrationService(session, app_context.clash_client).is_registered(message.from_user.id)
+        await message.answer("Главное меню", reply_markup=main_menu(True, is_registered))
+        return
+
+    try:
+        idx = int(text)
+    except ValueError:
+        await message.answer("⚠️ Введите номер игрока из списка или нажмите ⬅️ Назад.")
+        return
+
+    data = await state.get_data()
+    options = data.get("violation_player_options", [])
+    if idx < 1 or idx > len(options):
+        await message.answer("⚠️ Нет игрока с таким номером.")
+        return
+
+    selected = options[idx - 1]
+    try:
+        async with app_context.session_maker() as session:
+            period = await PeriodService(session).current_cycle()
+            service = StatsService(session, app_context.config)
+            report = await service.build_player_violations_report(
+                period.start,
+                period.end,
+                selected["player_tag"],
+                selected["player_name"],
+            )
+        await send_long_message(message, report)
+        await state.clear()
+    except Exception:
+        logger.exception("Failed to load player violations report")
+        await state.clear()
+        await message.answer("⚠️ Не удалось загрузить нарушения игрока. Попробуйте позже.")
 
 
 @router.message(F.text == "🚩 Чужой флажок")

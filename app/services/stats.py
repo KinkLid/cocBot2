@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import AppYamlConfig
 from app.repositories.stats import StatsRepository
+from app.repositories.war import WarRepository
 from app.schemas.dto import PlayerStatsDTO
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ class StatsService:
         self.session = session
         self.config = config
         self.repo = StatsRepository(session)
+        self.war_repo = WarRepository(session)
 
     async def player_stats(self, period_start, period_end, player_tag: str) -> PlayerStatsDTO:
         rows = await self.repo.aggregated_player_stats(
@@ -136,15 +138,49 @@ class StatsService:
         parts.append(f"🏅 Место в клане: {row.place}")
         return "\n".join(parts)
 
-    async def violations_ranking_current_cycle(self, period_start, period_end) -> str:
+
+    async def violations_ranking_current_cycle_data(self, period_start, period_end) -> list[dict[str, int | str]]:
         rows = await self.repo.current_clan_members_violations(
             clan_tag=self.config.main_clan_tag,
             period_start=period_start,
             period_end=period_end,
         )
         ranked = [row for row in rows if row[3] > 0]
+        return [
+            {
+                "player_tag": player_tag,
+                "player_name": player_name,
+                "violations": violations,
+            }
+            for player_tag, player_name, _, violations in ranked
+        ]
+
+    async def violations_ranking_current_cycle(self, period_start, period_end) -> str:
+        ranked = await self.violations_ranking_current_cycle_data(period_start, period_end)
         if not ranked:
             return "✅ За текущий цикл нарушений пока нет."
         lines = ["🚨 Нарушения за текущий цикл", ""]
-        lines.extend(f"{idx}. {player_name} — {violations}" for idx, (_, player_name, _, violations) in enumerate(ranked, 1))
+        lines.extend(f"{idx}. {row['player_name']} — {row['violations']}" for idx, row in enumerate(ranked, 1))
+        return "\n".join(lines)
+
+    async def build_player_violations_report(self, period_start, period_end, player_tag: str, player_name: str) -> str:
+        rows = await self.war_repo.list_player_violations_in_period(
+            clan_tag=self.config.main_clan_tag,
+            player_tag=player_tag,
+            period_start=period_start,
+            period_end=period_end,
+        )
+        if not rows:
+            return f"✅ У игрока {player_name} нет нарушений за текущий цикл."
+
+        lines = [f"🚨 Нарушения игрока: {player_name}", ""]
+        for idx, (violation, attack, war) in enumerate(rows, 1):
+            war_type = "ЛВК" if war.type.value == "cwl" else "КВ"
+            lines.append(
+                f"{idx}. {violation.detected_at:%Y-%m-%d %H:%M} | {war_type} | {attack.attacker_position} -> {attack.defender_position}"
+            )
+            lines.append(f"Код: {violation.code.value}")
+            lines.append(f"Причина: {violation.reason_text}")
+            if idx < len(rows):
+                lines.append("")
         return "\n".join(lines)
