@@ -150,6 +150,7 @@ class CapitalRaidParticipantDTO(BaseModel):
     attack_limit: int = Field(default=0, alias="attackLimit")
     bonus_attacks: int = Field(default=0, alias="bonusAttackLimit")
     capital_resources_looted: int = Field(default=0, alias="capitalResourcesLooted")
+    districts_destroyed: int = Field(default=0, alias="districtsDestroyed")
 
     model_config = {"populate_by_name": True}
 

@@ -30,6 +30,7 @@ class CapitalRaidSyncService:
         ended_from_api = 0
         created = 0
         updated = 0
+        backfilled = 0
         participants_saved = 0
         snapshots_saved = 0
         for season in seasons:
@@ -63,10 +64,14 @@ class CapitalRaidSyncService:
                 processed_at=now,
             ))
             first_processed = not existed_before
+            participants_count = await self.repo.count_participants_for_weekend(weekend.id)
+            should_backfill = existed_before and participants_count == 0
             if first_processed:
                 created += 1
             else:
                 updated += 1
+                if should_backfill:
+                    backfilled += 1
             participants = []
             for m in season.members:
                 participants_saved += 1
@@ -85,10 +90,11 @@ class CapitalRaidSyncService:
                     attacks=m.attacks,
                     attack_limit=m.attack_limit,
                     bonus_attacks=m.bonus_attacks,
+                    districts_destroyed=m.districts_destroyed,
                     capital_resources_looted=m.capital_resources_looted,
                     clan_capital_contributions_snapshot=snapshot,
                 ))
-                if first_processed and snapshot is not None:
+                if (first_processed or should_backfill) and snapshot is not None:
                     await self.snapshots.add(
                         player_tag=m.tag,
                         clan_tag=self.config.main_clan_tag,
@@ -100,11 +106,12 @@ class CapitalRaidSyncService:
         await self.session.commit()
         count_db_completed = await self.repo.count_completed_weekends(self.config.main_clan_tag)
         logger.info(
-            "Capital raid sync: api_total=%s, ended=%s, created=%s, updated=%s, participants_saved=%s, snapshots_saved=%s",
+            "Capital raid sync: api_total=%s, ended=%s, created=%s, updated=%s, backfilled=%s, participants_saved=%s, snapshots_saved=%s",
             api_total,
             ended_from_api,
             created,
             updated,
+            backfilled,
             participants_saved,
             snapshots_saved,
         )

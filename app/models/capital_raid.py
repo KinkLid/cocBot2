@@ -41,6 +41,7 @@ class CapitalRaidParticipant(Base):
     attack_limit: Mapped[int] = mapped_column(Integer, default=0)
     bonus_attacks: Mapped[int] = mapped_column(Integer, default=0)
     capital_resources_looted: Mapped[int] = mapped_column(Integer, default=0)
+    districts_destroyed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     clan_capital_contributions_snapshot: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     weekend = relationship("CapitalRaidWeekend", back_populates="participants")
