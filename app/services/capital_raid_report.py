@@ -20,23 +20,7 @@ class CapitalRaidReportService:
         return await self.repo.get_latest_completed_weekend(clan_tag)
 
     async def build_latest_weekend_report(self) -> str:
-        weekend = await self.get_latest_completed_weekend(self.config.main_clan_tag)
-        if weekend is None:
-            return "⚠️ По клановой столице пока нет сохраненных данных."
-        participants = await self.repo.list_participants_for_weekend(weekend.id)
-        participants.sort(key=lambda p: (-p.capital_resources_looted, -p.attacks, p.player_name))
-        start = weekend.start_time.date().isoformat() if weekend.start_time else "—"
-        end = weekend.end_time.date().isoformat() if weekend.end_time else "—"
-        lines = [
-            "🏰 Клановая столица",
-            f"📅 {start} — {end}",
-            "",
-        ]
-        for idx, p in enumerate(participants, start=1):
-            lines.append(
-                f"{idx}. {p.player_name} — атак: {p.attacks}, бонусных: {p.bonus_attacks}, золото: {p.capital_resources_looted}"
-            )
-        return "\n".join(lines)
+        return await self.build_recent_weekends_report(1)
 
     async def build_recent_weekends_report(self, count: int) -> str:
         available_count = await self.repo.count_completed_weekends(self.config.main_clan_tag)
@@ -90,7 +74,7 @@ class CapitalRaidReportService:
         for player_tag, row in player_stats.items():
             snapshots_count = await self.snapshot_repo.count_for_player(player_tag, self.config.main_clan_tag)
             base = await self.snapshot_repo.get_first_at_or_after(player_tag, self.config.main_clan_tag, oldest_end)
-            latest = await self.snapshot_repo.get_latest(player_tag, self.config.main_clan_tag)
+            latest = await self.snapshot_repo.get_latest_at_or_before(player_tag, self.config.main_clan_tag, newest_end)
             if base is None or latest is None:
                 row["invested_gold"] = 0
                 if snapshots_count < 2:

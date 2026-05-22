@@ -20,6 +20,7 @@ from app.bot.handlers.admin import (
     update_chat_link_start,
 )
 from app.bot.handlers.common import clan_chat_link
+from app.bot.keyboards.main import main_menu
 from app.bot.states.chat_link import ChatLinkStates
 from app.services.clan_chat import ClanChatService
 from app.services.export import ExportService
@@ -294,3 +295,12 @@ async def test_violation_player_selected_success(app_context, monkeypatch):
     await violation_player_selected(message, state, app_context)
     assert state.state is None
     assert "Нарушения игрока" in message.answer.await_args_list[0].args[0]
+
+
+def test_dev_capital_button_visible_only_for_admin():
+    admin = main_menu(True, True)
+    user = main_menu(False, True)
+    admin_texts = [b.text for row in admin.keyboard for b in row]
+    user_texts = [b.text for row in user.keyboard for b in row]
+    assert "🧪 Dev-столица" in admin_texts
+    assert "🧪 Dev-столица" not in user_texts

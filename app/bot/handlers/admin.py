@@ -16,6 +16,7 @@ from app.bot.states.violations import ViolationStates
 from app.container import AppContext
 from app.services.clan_chat import ClanChatService
 from app.services.capital_raid_report import CapitalRaidReportService
+from app.services.capital_raid_contribution import CapitalRaidContributionService
 from app.services.dev_contribution import ContributionDataUnavailableError, DevContributionService
 from app.services.donations import DonationService
 from app.services.export import ExportService
@@ -173,6 +174,25 @@ async def dev_donations(message: Message, app_context: AppContext) -> None:
         ranking = await service.build_current_cycle_donation_ranking()
         text = service.format_donation_ranking(ranking)
     await send_long_message(message, text)
+
+
+@router.message(F.text == "🧪 Dev-столица")
+async def dev_capital(message: Message, app_context: AppContext) -> None:
+    try:
+        _ensure_admin(app_context, message.from_user.id)
+    except PermissionError:
+        await message.answer("⛔ Недостаточно прав")
+        return
+    try:
+        async with app_context.session_maker() as session:
+            period = await PeriodService(session).current_cycle()
+            service = CapitalRaidContributionService(session, app_context.config)
+            ranking, destroy_stats_available = await service.build_current_cycle_ranking(period)
+            text = service.format_current_cycle_ranking(period, ranking, destroy_stats_available)
+        await send_long_message(message, text)
+    except Exception:
+        logger.exception("Failed to build dev capital contribution report")
+        await message.answer("⚠️ Не удалось построить отчет по Dev-столице. Попробуйте позже.")
 
 
 @router.message(F.text == "🚨 Нарушения")

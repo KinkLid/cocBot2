@@ -78,8 +78,8 @@ async def test_sync_finished_logs_summary_counts(session, fake_clash_client, app
     await service.sync_finished()
     await service.sync_finished()
 
-    assert "Capital raid sync: api_total=2, ended=2, created=2, updated=0, participants_saved=2, snapshots_saved=2" in caplog.text
-    assert "Capital raid sync: api_total=2, ended=2, created=0, updated=2, participants_saved=2, snapshots_saved=0" in caplog.text
+    assert "Capital raid sync: api_total=2, ended=2, created=2, updated=0, backfilled=0, participants_saved=2, snapshots_saved=2" in caplog.text
+    assert "Capital raid sync: api_total=2, ended=2, created=0, updated=2, backfilled=0, participants_saved=2, snapshots_saved=0" in caplog.text
     assert "Capital raid season processing: raid_season_id=" in caplog.text
 
 
@@ -105,3 +105,19 @@ async def test_sync_finished_logs_warning_when_api_has_more_ended_than_db(sessio
     service.repo.count_completed_weekends = original_count_completed
 
     assert "Capital raid sync warning: API returned 2 ended weekends, but only 1 completed weekend is present in DB after sync" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_sync_finished_backfills_existing_weekend_without_participants(session, fake_clash_client, app_yaml_config):
+    season = CapitalRaidSeasonDTO(state="ended", startTime="20260510T000000.000Z", endTime="20260512T000000.000Z", members=[CapitalRaidParticipantDTO(tag="#P1", name="P1", attacks=6, attackLimit=6, bonusAttackLimit=1, capitalResourcesLooted=1000, districtsDestroyed=2)])
+    async def _seasons(clan_tag, limit=10):
+        return [season]
+    fake_clash_client.get_capital_raid_seasons = _seasons
+    fake_clash_client.players["#P1"] = PlayerProfileDTO(tag="#P1", name="P1", townHallLevel=16, clanCapitalContributions=777)
+    service = CapitalRaidSyncService(session, fake_clash_client, app_yaml_config)
+    await service.sync_finished()
+    await session.execute("DELETE FROM capital_raid_participants")
+    await session.commit()
+    await service.sync_finished()
+    count = await session.scalar(select(func.count()).select_from(PlayerCapitalContributionSnapshot))
+    assert count == 2

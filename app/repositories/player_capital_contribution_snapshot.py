@@ -45,6 +45,19 @@ class PlayerCapitalContributionSnapshotRepository:
         )
         return res.scalar_one_or_none()
 
+    async def get_latest_at_or_before(self, player_tag: str, clan_tag: str, observed_at: datetime) -> PlayerCapitalContributionSnapshot | None:
+        res = await self.session.execute(
+            select(PlayerCapitalContributionSnapshot)
+            .where(
+                PlayerCapitalContributionSnapshot.player_tag == player_tag,
+                PlayerCapitalContributionSnapshot.clan_tag == clan_tag,
+                PlayerCapitalContributionSnapshot.observed_at <= observed_at,
+            )
+            .order_by(PlayerCapitalContributionSnapshot.observed_at.desc(), PlayerCapitalContributionSnapshot.id.desc())
+            .limit(1)
+        )
+        return res.scalar_one_or_none()
+
     async def count_for_player(self, player_tag: str, clan_tag: str) -> int:
         res = await self.session.execute(
             select(func.count(PlayerCapitalContributionSnapshot.id)).where(

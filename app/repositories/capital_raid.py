@@ -53,6 +53,12 @@ class CapitalRaidRepository:
         )
         return list(res.scalars())
 
+    async def count_participants_for_weekend(self, weekend_id: int) -> int:
+        res = await self.session.execute(
+            select(func.count(CapitalRaidParticipant.id)).where(CapitalRaidParticipant.weekend_id == weekend_id)
+        )
+        return int(res.scalar_one())
+
     async def list_latest_completed_weekends(self, clan_tag: str, limit: int) -> list[CapitalRaidWeekend]:
         res = await self.session.execute(
             select(CapitalRaidWeekend)
@@ -78,3 +84,29 @@ class CapitalRaidRepository:
             )
         )
         return int(res.scalar_one())
+
+    async def list_weekends_for_period(self, clan_tag: str, period_start, period_end) -> list[CapitalRaidWeekend]:
+        res = await self.session.execute(
+            select(CapitalRaidWeekend)
+            .where(
+                CapitalRaidWeekend.clan_tag == clan_tag,
+                CapitalRaidWeekend.end_time.is_not(None),
+                CapitalRaidWeekend.end_time >= period_start,
+                CapitalRaidWeekend.end_time <= period_end,
+            )
+            .order_by(CapitalRaidWeekend.end_time.asc())
+        )
+        return list(res.scalars())
+
+    async def list_participants_for_period(self, clan_tag: str, period_start, period_end) -> list[CapitalRaidParticipant]:
+        res = await self.session.execute(
+            select(CapitalRaidParticipant)
+            .join(CapitalRaidWeekend, CapitalRaidWeekend.id == CapitalRaidParticipant.weekend_id)
+            .where(
+                CapitalRaidWeekend.clan_tag == clan_tag,
+                CapitalRaidWeekend.end_time.is_not(None),
+                CapitalRaidWeekend.end_time >= period_start,
+                CapitalRaidWeekend.end_time <= period_end,
+            )
+        )
+        return list(res.scalars())
