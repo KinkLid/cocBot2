@@ -10,7 +10,9 @@ from app.repositories.capital_raid_violation import CapitalRaidViolationReposito
 
 @dataclass(slots=True)
 class CapitalRaidCycleStats:
-    completed_weekends: int
+    total_completed_weekends: int
+    weekends_with_participants: int
+    weekends_without_participants: int
 
 
 class CapitalRaidStatsService:
@@ -23,7 +25,13 @@ class CapitalRaidStatsService:
         weekends = await self.repo.list_weekends_for_period(
             self.config.main_clan_tag, period.start, period.end
         )
-        participants = await self.repo.list_participants_for_weekend_ids([weekend.id for weekend in weekends])
+        total_completed_weekends = len(weekends)
+        weekend_ids = {weekend.id for weekend in weekends}
+        participants = await self.repo.list_participants_for_weekend_ids(list(weekend_ids))
+        weekends_with_participants = len(
+            {participant.weekend_id for participant in participants if participant.weekend_id in weekend_ids}
+        )
+        weekends_without_participants = total_completed_weekends - weekends_with_participants
         violation_counts = await self.violation_repo.aggregated_current_cycle(
             self.config.main_clan_tag, period.start, period.end
         )
@@ -59,17 +67,26 @@ class CapitalRaidStatsService:
                 str(row["player_name"]),
             )
         )
-        return result, CapitalRaidCycleStats(completed_weekends=len(weekends))
+        return result, CapitalRaidCycleStats(
+            total_completed_weekends=total_completed_weekends,
+            weekends_with_participants=weekends_with_participants,
+            weekends_without_participants=weekends_without_participants,
+        )
 
     def format_current_cycle_stats(self, period, rows, stats: CapitalRaidCycleStats) -> str:
-        if not rows:
+        if stats.total_completed_weekends == 0:
             return "⚠️ По столице за текущий цикл пока нет данных."
+        if stats.weekends_with_participants == 0:
+            return "⚠️ В текущем цикле есть завершенные рейды столицы, но по ним нет данных участников."
         lines = [
             "🏰 Столица",
             f"📅 {period.start.date().isoformat()} — {period.end.date().isoformat()}",
-            f"📦 Учтено рейдов столицы: {stats.completed_weekends}",
-            "",
+            f"📦 Завершенных рейдов в цикле: {stats.total_completed_weekends}",
+            f"✅ Рейдов с данными участников: {stats.weekends_with_participants}",
         ]
+        if stats.weekends_without_participants > 0:
+            lines.append(f"⚠️ Рейдов без данных участников: {stats.weekends_without_participants}")
+        lines.append("")
         for index, row in enumerate(rows, 1):
             lines.append(
                 f"{index}. {row['player_name']} — рейдов: {row['weekends_count']}, "
