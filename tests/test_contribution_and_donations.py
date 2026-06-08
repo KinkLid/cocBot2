@@ -19,7 +19,16 @@ from app.domain.dev_contribution import (
 )
 from app.schemas.dto import PlayerProfileDTO
 from app.services import dev_contribution as contribution_module
-from app.services.dev_contribution import ContributionDataUnavailableError, ContributionRankingRow, DevContributionService
+from app.services.contribution_breakdown import (
+    ContributionBreakdownItem,
+    ContributionBreakdownService,
+    PlayerContributionBreakdown,
+)
+from app.services.dev_contribution import (
+    ContributionDataUnavailableError,
+    ContributionRankingRow,
+    DevContributionService,
+)
 from app.services.auth import AuthService
 from app.services.active_violation_counter import ActiveViolationCounterService
 from app.services.donations import DonationService
@@ -117,36 +126,94 @@ def test_public_contribution_button_and_admin_buttons_for_non_admin():
     assert "🏰 Столица" not in flat
 
 
-def test_contribution_ranking_formats_donations_violations_and_newcomer():
+def test_contribution_ranking_formats_only_total_score_and_statuses():
     service = DevContributionService(object(), SimpleNamespace(main_clan_tag="#CLAN"))
+
     text = service.format_contribution_ranking(
         [
             ContributionRankingRow(
                 "#P1",
-                "Both",
+                "No Mark",
                 1,
                 160.45,
-                True,
-                active_violations=3,
+                False,
                 donations=380,
                 donation_points=3.8,
             ),
             ContributionRankingRow(
                 "#P2",
-                "No Mark",
+                "Violation",
+                1,
+                120.0,
+                False,
+                active_violations=3,
+                donations=200,
+                donation_points=2.0,
+            ),
+            ContributionRankingRow(
+                "#P3",
+                "Newcomer",
+                1,
+                110.0,
+                True,
+                donations=100,
+                donation_points=1.0,
+            ),
+            ContributionRankingRow(
+                "#P4",
+                "Both",
                 1,
                 100.0,
-                False,
-                active_violations=2,
-                donations=0,
-                donation_points=0.0,
+                True,
+                active_violations=3,
+                donations=50,
+                donation_points=0.5,
             ),
         ]
     )
 
-    assert "1. Both — 160.45 | донат: 380 (+3.80) ❌ 🆕 новенький" in text
-    assert "2. No Mark — 100.00 | донат: 0 (+0.00)" in text
-    assert "No Mark — 100.00 | донат: 0 (+0.00) ❌" not in text
+    assert text.splitlines() == [
+        "🏆 Общий вклад",
+        "",
+        "1. No Mark — 160.45",
+        "2. Violation — 120.00 ❌",
+        "3. Newcomer — 110.00 🆕 новенький",
+        "4. Both — 100.00 ❌ 🆕 новенький",
+    ]
+    assert "донат:" not in text
+    assert "380" not in text
+    assert "+3.80" not in text
+
+
+def test_contribution_breakdown_still_formats_donation_component():
+    breakdown = PlayerContributionBreakdown(
+        player_tag="#P1",
+        player_name="Donor",
+        period_start=NOW - timedelta(days=1),
+        period_end=NOW,
+        attack_score_total=100.0,
+        unused_attack_penalty_total=0.0,
+        donation_total=380,
+        donation_score_total=3.8,
+        final_score=103.8,
+        active_violations=0,
+        items=[
+            ContributionBreakdownItem(
+                kind="donations",
+                title="Донаты войск за цикл",
+                occurred_at=None,
+                score_delta=3.8,
+                details="Сырой донат: 380",
+            )
+        ],
+    )
+
+    short_text = ContributionBreakdownService.format_short_breakdown(breakdown)
+    detailed_text = ContributionBreakdownService.format_detailed_breakdown(breakdown)
+
+    assert "Донаты: +3.80 (сырой донат: 380)" in short_text
+    assert "Донаты войск за цикл | Сырой донат: 380" in detailed_text
+    assert "+3.80" in detailed_text
 
 
 def _build_test_app_context(app_yaml_config):
