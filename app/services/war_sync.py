@@ -9,9 +9,9 @@ from app.domain.violation_rules import evaluate_attack_violation
 from app.models import Attack, Violation, War, WarParticipant
 from app.models.enums import WarState, WarType
 from app.repositories.player_account import PlayerAccountRepository
-from app.repositories.stats import StatsRepository
 from app.repositories.war import WarRepository
 from app.schemas.dto import CWLGroupDTO, WarDTO
+from app.services.active_violation_counter import ActiveViolationCounterService
 from app.services.notifications import AdminNotifier
 from app.services.period import PeriodService
 from app.utils.time import parse_coc_time, utcnow
@@ -33,7 +33,7 @@ class WarSyncService:
         self.notifier = notifier
         self.wars = WarRepository(session)
         self.players = PlayerAccountRepository(session)
-        self.stats_repo = StatsRepository(session)
+        self.active_violation_counter = ActiveViolationCounterService(session)
         self.period_service = PeriodService(session)
 
     async def sync_all(self) -> None:
@@ -185,13 +185,18 @@ class WarSyncService:
         if war.is_friendly:
             return
 
+        violation = await self.wars.get_violation_by_attack_id(attack.id)
+        if war.war_type == WarType.CWL:
+            if violation is not None:
+                await self.wars.delete_violation(violation)
+            return
+
         decision = evaluate_attack_violation(
             war_start_time=war.start_time,
             attack_seen_at=attack.observed_at,
             attacker_position=attack.attacker_position,
             defender_position=attack.defender_position,
         )
-        violation = await self.wars.get_violation_by_attack_id(attack.id)
         if violation is not None and violation.is_manual is True:
             return
 
@@ -215,7 +220,9 @@ class WarSyncService:
                 )
             )
             current_cycle = await self.period_service.current_cycle(attack.observed_at)
-            violation_number = await self.stats_repo.violation_count_for_player(attack.attacker_tag, current_cycle.start, current_cycle.end)
+            violation_number = await self.active_violation_counter.count_for_player(
+                attack.attacker_tag, current_cycle.start, current_cycle.end
+            )
             war_label = "ЛВК" if war.war_type == WarType.CWL else "КВ"
             text = (
                 f"🚨 Нарушение атаки\n"

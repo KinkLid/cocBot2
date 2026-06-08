@@ -13,6 +13,7 @@ from app.repositories.capital_raid_violation import CapitalRaidViolationReposito
 from app.repositories.stats import StatsRepository
 from app.repositories.war import WarRepository
 from app.schemas.dto import PlayerStatsDTO
+from app.services.active_violation_counter import ActiveViolationCounterService
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ class StatsService:
         self.repo = StatsRepository(session)
         self.war_repo = WarRepository(session)
         self.capital_violation_repo = CapitalRaidViolationRepository(session)
+        self.active_violation_counter = ActiveViolationCounterService(session)
 
     async def player_stats(self, period_start, period_end, player_tag: str) -> PlayerStatsDTO:
         rows = await self.repo.aggregated_player_stats(
@@ -149,21 +151,57 @@ class StatsService:
             period_start=period_start,
             period_end=period_end,
         )
-        capital_counts = await self.capital_violation_repo.aggregated_current_cycle(
-            self.config.main_clan_tag, period_start, period_end
+        player_tags = [player_tag for player_tag, _, _, _ in rows]
+        active_counts = await self.active_violation_counter.counts_for_players(
+            player_tags, period_start, period_end
         )
-        combined = [
-            (player_tag, player_name, clan_rank, violations + capital_counts.get(player_tag, 0))
-            for player_tag, player_name, clan_rank, violations in rows
-        ]
         ranked = sorted(
-            (row for row in combined if row[3] > 0),
+            (
+                (player_tag, player_name, clan_rank, active_counts.get(player_tag, 0))
+                for player_tag, player_name, clan_rank, _ in rows
+                if active_counts.get(player_tag, 0) > 0
+            ),
             key=lambda row: (-row[3], row[2] or 10_000, row[1]),
         )
         return [
             {"player_tag": player_tag, "player_name": player_name, "violations": violations}
             for player_tag, player_name, _, violations in ranked
         ]
+
+    async def violation_counter_reset_options(
+        self, period_start, period_end
+    ) -> list[dict[str, int | str]]:
+        rows = await self.repo.current_clan_members_violations(
+            clan_tag=self.config.main_clan_tag,
+            period_start=period_start,
+            period_end=period_end,
+        )
+        active_counts = await self.active_violation_counter.counts_for_players(
+            [player_tag for player_tag, _, _, _ in rows], period_start, period_end
+        )
+        ordered = sorted(
+            (
+                (player_tag, player_name, clan_rank, active_counts.get(player_tag, 0))
+                for player_tag, player_name, clan_rank, _ in rows
+            ),
+            key=lambda row: (-row[3], row[2] or 10_000, row[1]),
+        )
+        return [
+            {"player_tag": player_tag, "player_name": player_name, "violations": violations}
+            for player_tag, player_name, _, violations in ordered
+        ]
+
+    def format_violation_counter_reset_options(
+        self, options: list[dict[str, int | str]]
+    ) -> str:
+        if not options:
+            return "⚠️ В текущем цикле нет игроков для сброса счетчика."
+        lines = ["🚨 Активный счетчик нарушений", ""]
+        lines.extend(
+            f"{idx}. {row['player_name']} — {row['violations']}"
+            for idx, row in enumerate(options, 1)
+        )
+        return "\n".join(lines)
 
     async def violations_ranking_current_cycle(self, period_start, period_end) -> str:
         ranked = await self.violations_ranking_current_cycle_data(period_start, period_end)
@@ -211,10 +249,20 @@ class StatsService:
                 )
             )
         entries.sort(key=lambda entry: entry[0])
+        active_count = await self.active_violation_counter.count_for_player(
+            player_tag, period_start, period_end
+        )
         if not entries:
-            return f"✅ У игрока {player_name} нет нарушений за текущий цикл."
+            return (
+                f"✅ У игрока {player_name} нет нарушений за текущий цикл.\n"
+                f"Активный счетчик нарушений: {active_count}"
+            )
 
-        lines = [f"🚨 Нарушения игрока: {player_name}", ""]
+        lines = [
+            f"🚨 Нарушения игрока: {player_name}",
+            f"Активный счетчик нарушений: {active_count}",
+            "",
+        ]
         for idx, (_, detail_lines) in enumerate(entries, 1):
             lines.append(f"{idx}. {detail_lines[0]}")
             lines.extend(detail_lines[1:])

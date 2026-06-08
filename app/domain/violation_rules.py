@@ -37,21 +37,21 @@ def evaluate_attack_violation(
     if normalized_attack_seen_at >= normalized_war_start_time + TWELVE_HOURS:
         return ViolationDecision(violated=False)
 
-    min_allowed_position = attacker_position
-    max_allowed_position = attacker_position + 10
+    min_allowed_position = attacker_position - 1
+    max_allowed_position = attacker_position + 3
 
     if defender_position < min_allowed_position:
         return ViolationDecision(
             violated=True,
             code=ViolationCode.ABOVE_SELF,
-            reason_text="Атака по сопернику выше своей позиции в первые 12 часов",
+            reason_text="Атака по сопернику выше своей позиции более чем на 1 место в первые 12 часов",
         )
 
     if defender_position > max_allowed_position:
         return ViolationDecision(
             violated=True,
             code=ViolationCode.TOO_LOW,
-            reason_text="Атака по сопернику ниже своей позиции более чем на 10 мест в первые 12 часов",
+            reason_text="Атака по сопернику ниже своей позиции более чем на 3 места в первые 12 часов",
         )
 
     return ViolationDecision(violated=False)

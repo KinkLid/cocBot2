@@ -44,7 +44,7 @@ def test_evaluate_attack_violation_handles_both_aware_datetimes() -> None:
         war_start_time=war_start_time,
         attack_seen_at=attack_seen_at,
         attacker_position=12,
-        defender_position=22,
+        defender_position=15,
     )
 
     assert decision.violated is False
@@ -64,36 +64,35 @@ def test_attack_after_12_hours_is_not_a_violation_for_mixed_datetime_types() -> 
     assert decision.violated is False
 
 
-def test_first_12_hours_rules_are_preserved_without_regression() -> None:
+def test_regular_war_position_boundaries_in_first_12_hours() -> None:
     war_start_time = datetime(2026, 4, 1, 10, 0, tzinfo=UTC)
     attack_seen_at = war_start_time + timedelta(hours=2)
 
-    mirror = evaluate_attack_violation(
-        war_start_time=war_start_time,
-        attack_seen_at=attack_seen_at,
-        attacker_position=26,
-        defender_position=26,
-    )
-    above_self = evaluate_attack_violation(
-        war_start_time=war_start_time,
-        attack_seen_at=attack_seen_at,
-        attacker_position=26,
-        defender_position=25,
-    )
-    allowed_low = evaluate_attack_violation(
-        war_start_time=war_start_time,
-        attack_seen_at=attack_seen_at,
-        attacker_position=26,
-        defender_position=36,
-    )
-    too_low = evaluate_attack_violation(
-        war_start_time=war_start_time,
-        attack_seen_at=attack_seen_at,
-        attacker_position=26,
-        defender_position=37,
-    )
+    cases = [
+        (10, 9, False, None),
+        (10, 8, True, ViolationCode.ABOVE_SELF),
+        (10, 13, False, None),
+        (10, 14, True, ViolationCode.TOO_LOW),
+    ]
+    for attacker, defender, violated, code in cases:
+        decision = evaluate_attack_violation(
+            war_start_time=war_start_time,
+            attack_seen_at=attack_seen_at,
+            attacker_position=attacker,
+            defender_position=defender,
+        )
+        assert decision.violated is violated
+        assert decision.code == code
 
-    assert mirror.violated is False
-    assert above_self.violated is True and above_self.code == ViolationCode.ABOVE_SELF
-    assert allowed_low.violated is False
-    assert too_low.violated is True and too_low.code == ViolationCode.TOO_LOW
+
+def test_updated_violation_reason_texts() -> None:
+    start = datetime(2026, 4, 1, 10, 0, tzinfo=UTC)
+    above = evaluate_attack_violation(start, start + timedelta(hours=1), 10, 8)
+    low = evaluate_attack_violation(start, start + timedelta(hours=1), 10, 14)
+
+    assert above.reason_text == (
+        "Атака по сопернику выше своей позиции более чем на 1 место в первые 12 часов"
+    )
+    assert low.reason_text == (
+        "Атака по сопернику ниже своей позиции более чем на 3 места в первые 12 часов"
+    )
