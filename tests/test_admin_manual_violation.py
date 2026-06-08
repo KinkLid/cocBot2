@@ -205,3 +205,21 @@ async def test_manual_claimed_target_attack_selected_returns_error_and_clears_st
 
     assert message.answer.await_args.args[0] == "⚠️ Не удалось поставить нарушение. Попробуйте позже."
     assert state.state is None
+
+
+@pytest.mark.asyncio
+async def test_manual_claimed_target_excludes_cwl_attacks(session, app_yaml_config):
+    now = datetime(2026, 5, 20, 10, 0, tzinfo=UTC)
+    war = War(war_uid="cwl-manual", clan_tag="#CLAN", clan_name="T", opponent_tag="#E", opponent_name="E", war_type=WarType.CWL, state="in_war", league_group_id="g", cwl_season="2026-05", round_index=0, team_size=15, is_friendly=False, start_time=now - timedelta(hours=1), end_time=now + timedelta(hours=2), preparation_start_time=now - timedelta(hours=23), source_payload={})
+    session.add(war)
+    await session.flush()
+    attack = Attack(war_id=war.id, attacker_player_id=None, attacker_tag="#P2", attacker_name="Alpha", attacker_position=10, attacker_town_hall=16, defender_tag="#E2", defender_name="Enemy2", defender_position=1, defender_town_hall=16, stars=2, destruction=80, attack_order=1, observed_at=now)
+    session.add(attack)
+    await session.commit()
+
+    service = ManualViolationService(session, app_yaml_config)
+    attacks = await service.list_player_attacks_for_current_cycle("#P2")
+    assert attacks == []
+    with pytest.raises(ValueError, match="Для ЛВК ручные нарушения отключены"):
+        await service.apply_claimed_target_violation(attack.id, 1)
+    assert await session.scalar(select(Violation).where(Violation.attack_id == attack.id)) is None

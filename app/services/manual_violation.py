@@ -35,7 +35,17 @@ class ManualViolationService:
             period_start=period.start,
             period_end=period.end,
         )
-        rows = [ManualViolationPlayerOption(r.player_tag, r.player_name, r.clan_rank, r.attacks) for r in stats if r.attacks > 0]
+        rows = []
+        for row in stats:
+            attacks = await self.wars.list_attacks_for_player_in_period(
+                self.config.main_clan_tag, row.player_tag, period.start, period.end
+            )
+            if attacks:
+                rows.append(
+                    ManualViolationPlayerOption(
+                        row.player_tag, row.player_name, row.clan_rank, len(attacks)
+                    )
+                )
         return sorted(rows, key=lambda x: (x.current_clan_rank is None, x.current_clan_rank or 999, x.player_name.casefold()))
 
     def format_players_for_selection(self, players: list[ManualViolationPlayerOption]) -> str:
@@ -66,6 +76,11 @@ class ManualViolationService:
         attack = await self.wars.get_attack_by_id(attack_id)
         if attack is None:
             raise ValueError("Атака не найдена")
+        war = await self.wars.get_war_by_id(attack.war_id)
+        if war is None:
+            raise ValueError("Война не найдена")
+        if war.war_type == WarType.CWL:
+            raise ValueError("Для ЛВК ручные нарушения отключены")
         violation = await self.wars.get_violation_by_attack_id(attack.id)
         if violation is None:
             violation = await self.wars.add_violation(

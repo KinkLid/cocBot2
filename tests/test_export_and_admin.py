@@ -113,10 +113,10 @@ async def test_full_log_file_can_be_downloaded(app_context):
 
 
 @pytest.mark.asyncio
-async def test_dev_contribution_button_is_admin_only(app_context):
-    message = FakeMessage(text="🧪 Dev-вклад", user_id=999)
+async def test_dev_contribution_button_is_available_to_non_admin(app_context):
+    message = FakeMessage(text="🏆 Общий вклад", user_id=999)
     await dev_contribution(message, app_context)
-    assert "Недостаточно прав" in message.answer.await_args.args[0]
+    assert "Недостаточно прав" not in message.answer.await_args.args[0]
 
 
 @pytest.mark.asyncio

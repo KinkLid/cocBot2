@@ -14,6 +14,7 @@ from app.models.return_event import ReturnEvent
 from app.models.telegram_player_link import TelegramPlayerLink
 from app.models.telegram_user import TelegramUser
 from app.models.violation import Violation
+from app.models.violation_counter_reset import ViolationCounterReset
 from app.models.war import War, WarParticipant
 
 __all__ = [
@@ -34,6 +35,7 @@ __all__ = [
     "TelegramPlayerLink",
     "TelegramUser",
     "Violation",
+    "ViolationCounterReset",
     "ViolationCode",
     "War",
     "WarParticipant",

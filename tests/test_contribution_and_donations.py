@@ -21,11 +21,22 @@ from app.schemas.dto import PlayerProfileDTO
 from app.services import dev_contribution as contribution_module
 from app.services.dev_contribution import ContributionDataUnavailableError, ContributionRankingRow, DevContributionService
 from app.services.auth import AuthService
+from app.services.active_violation_counter import ActiveViolationCounterService
 from app.services.donations import DonationService
 from tests.fakes import FakeMessage
 
 
 NOW = datetime.now(UTC)
+
+
+@pytest.fixture(autouse=True)
+def _default_active_violation_counts(monkeypatch):
+    monkeypatch.setattr(
+        ActiveViolationCounterService,
+        "counts_for_players",
+        AsyncMock(return_value={}),
+    )
+
 
 
 def test_contribution_formulas():
@@ -86,12 +97,28 @@ def test_admin_menu_buttons_updated():
     assert "🏰 Столица" in flat
     assert "🧪 Dev-донаты" in flat
     assert "🚨 Нарушения" in flat
+    assert "♻️ Сбросить счетчик нарушений" in flat
 
 
-def test_violations_button_hidden_for_non_admin():
+def test_public_contribution_button_and_admin_buttons_for_non_admin():
     flat = [b.text for row in main_menu(is_admin=False, is_registered=True).keyboard for b in row]
+    assert "🏆 Общий вклад" in flat
     assert "🚨 Нарушения" not in flat
+    assert "♻️ Сбросить счетчик нарушений" not in flat
     assert "🏰 Столица" not in flat
+
+
+def test_contribution_ranking_marks_three_active_violations():
+    service = DevContributionService(object(), SimpleNamespace(main_clan_tag="#CLAN"))
+    text = service.format_contribution_ranking(
+        [
+            ContributionRankingRow("#P1", "Three", 1, 123.45, False, 3),
+            ContributionRankingRow("#P2", "Two", 1, 100.0, False, 2),
+        ]
+    )
+
+    assert "Three — 123.45 ❌" in text
+    assert "Two — 100.00 ❌" not in text
 
 
 def _build_test_app_context(app_yaml_config):
@@ -149,8 +176,8 @@ def test_dev_contribution_mixed_players_with_and_without_stars_builds_report(app
     monkeypatch.setattr(contribution_module.StatsRepository, "participation_rows_for_players", AsyncMock(return_value=[]))
     monkeypatch.setattr(contribution_module.StatsRepository, "enemy_participation_rows_for_wars", AsyncMock(return_value=[]))
 
-    async def newcomer_side_effect(_player_id, score, wars):
-        return score == 0 and wars == 0
+    async def newcomer_side_effect(player_id):
+        return player_id == 2
 
     monkeypatch.setattr(DevContributionService, "is_newcomer", AsyncMock(side_effect=newcomer_side_effect))
 
@@ -381,7 +408,7 @@ def test_contribution_ranking_tie_break_is_stable(app_yaml_config, monkeypatch):
     assert [row.player_tag for row in ranking] == ["#A", "#B"]
 
 
-def test_build_contribution_ranking_recomputes_above_self_without_persisted_violation(app_yaml_config, monkeypatch):
+def test_build_contribution_ranking_allows_one_position_above(app_yaml_config, monkeypatch):
     player = SimpleNamespace(player_tag="#P1", player_name="P1", wars=1, player_id=1)
     war = SimpleNamespace(id=101, war_type=contribution_module.WarType.REGULAR, start_time=NOW - timedelta(hours=2), end_time=NOW - timedelta(minutes=1))
     attacks = [
@@ -395,7 +422,7 @@ def test_build_contribution_ranking_recomputes_above_self_without_persisted_viol
     monkeypatch.setattr(DevContributionService, "is_newcomer", AsyncMock(return_value=False))
 
     ranking = asyncio.run(DevContributionService(object(), app_yaml_config).build_contribution_ranking(SimpleNamespace(start=NOW - timedelta(days=1), end=NOW)))
-    assert ranking[0].score == 88.0
+    assert ranking[0].score == 96.0
 
 
 
@@ -418,8 +445,8 @@ def test_build_contribution_ranking_real_cases_for_timon_and_0b_sos(app_yaml_con
 
     ranking = asyncio.run(DevContributionService(object(), app_yaml_config).build_contribution_ranking(SimpleNamespace(start=NOW - timedelta(days=1), end=NOW)))
     by_tag = {row.player_tag: row.score for row in ranking}
-    assert by_tag["#TIMON"] == 80.0
-    assert by_tag["#SOS"] == 59.3
+    assert by_tag["#TIMON"] == 96.0
+    assert by_tag["#SOS"] == 67.3
 
 def test_build_contribution_ranking_keeps_cwl_without_positional_penalties(app_yaml_config, monkeypatch):
     player = SimpleNamespace(player_tag="#P1", player_name="P1", wars=1, player_id=1)

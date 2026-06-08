@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import Attack, CycleBoundary, Violation, War, WarParticipant
+from app.models.enums import WarType
 
 
 class WarRepository:
@@ -67,6 +68,9 @@ class WarRepository:
         result = await self.session.execute(select(Attack).where(Attack.id == attack_id))
         return result.scalar_one_or_none()
 
+    async def get_war_by_id(self, war_id: int) -> War | None:
+        return await self.session.scalar(select(War).where(War.id == war_id))
+
     async def list_attacks_for_player_in_period(self, clan_tag: str, player_tag: str, period_start, period_end) -> list[tuple[Attack, War, Violation | None]]:
         result = await self.session.execute(
             select(Attack, War, Violation)
@@ -77,6 +81,7 @@ class WarRepository:
                 Attack.attacker_tag == player_tag,
                 Attack.observed_at >= period_start,
                 Attack.observed_at <= period_end,
+                War.war_type == WarType.REGULAR,
             )
             .order_by(Attack.observed_at.asc(), Attack.attack_order.asc())
         )

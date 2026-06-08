@@ -23,6 +23,8 @@ from app.services.period import PeriodService
 from app.services.registration import RegistrationService
 from app.services.manual_violation import ManualViolationService
 from app.services.stats import StatsService
+from app.repositories.violation_counter_reset import ViolationCounterResetRepository
+from app.utils.time import utcnow
 
 router = Router(name="admin")
 logger = logging.getLogger(__name__)
@@ -92,11 +94,6 @@ async def export_json(message: Message, app_context: AppContext) -> None:
 
 @router.message(F.text == "🏆 Общий вклад")
 async def dev_contribution(message: Message, app_context: AppContext) -> None:
-    try:
-        _ensure_admin(app_context, message.from_user.id)
-    except PermissionError:
-        await message.answer("⛔ Недостаточно прав")
-        return
     try:
         async with app_context.session_maker() as session:
             period = await PeriodService(session).current_cycle()
@@ -213,6 +210,90 @@ async def current_cycle_violations(message: Message, state: FSMContext, app_cont
     await state.update_data(violation_player_options=options)
     await state.set_state(ViolationStates.awaiting_violation_player_number)
     await send_long_message(message, text + "\n\nВведите номер игрока, чтобы посмотреть его нарушения.\nИли нажмите ⬅️ Назад.")
+
+
+@router.message(F.text == "♻️ Сбросить счетчик нарушений")
+async def reset_violation_counter_start(
+    message: Message, state: FSMContext, app_context: AppContext
+) -> None:
+    try:
+        _ensure_admin(app_context, message.from_user.id)
+    except PermissionError:
+        await message.answer("⛔ Недостаточно прав")
+        return
+    async with app_context.session_maker() as session:
+        period = await PeriodService(session).current_cycle()
+        service = StatsService(session, app_context.config)
+        options = await service.violation_counter_reset_options(period.start, period.end)
+        text = service.format_violation_counter_reset_options(options)
+    if not options:
+        await send_long_message(message, text)
+        return
+
+    await state.update_data(reset_player_options=options)
+    await state.set_state(ViolationStates.awaiting_reset_player_number)
+    await send_long_message(
+        message,
+        text
+        + "\n\nВведите номер игрока, чтобы сбросить ему счетчик нарушений."
+        + "\nИли нажмите ⬅️ Назад.",
+    )
+
+
+@router.message(ViolationStates.awaiting_reset_player_number)
+async def reset_violation_counter_selected(
+    message: Message, state: FSMContext, app_context: AppContext
+) -> None:
+    try:
+        _ensure_admin(app_context, message.from_user.id)
+    except PermissionError:
+        await message.answer("⛔ Недостаточно прав")
+        await state.clear()
+        return
+
+    text = (message.text or "").strip()
+    if text == "⬅️ Назад":
+        await state.clear()
+        async with app_context.session_maker() as session:
+            is_registered = await RegistrationService(
+                session, app_context.clash_client
+            ).is_registered(message.from_user.id)
+        await message.answer("Главное меню", reply_markup=main_menu(True, is_registered))
+        return
+
+    try:
+        idx = int(text)
+    except ValueError:
+        await message.answer("⚠️ Введите номер игрока из списка или нажмите ⬅️ Назад.")
+        return
+
+    data = await state.get_data()
+    options = data.get("reset_player_options", [])
+    if idx < 1 or idx > len(options):
+        await message.answer("⚠️ Нет игрока с таким номером.")
+        return
+
+    selected = options[idx - 1]
+    try:
+        async with app_context.session_maker() as session:
+            period = await PeriodService(session).current_cycle()
+            await ViolationCounterResetRepository(session).add_reset(
+                player_tag=selected["player_tag"],
+                cycle_start=period.start,
+                reset_at=utcnow(),
+                reset_by_admin_telegram_id=message.from_user.id,
+            )
+            await session.commit()
+        await state.clear()
+        await message.answer(
+            "✅ Счетчик нарушений сброшен\n"
+            f"Игрок: {selected['player_name']}\n"
+            "Теперь в текущем цикле активный счетчик для него считается заново."
+        )
+    except Exception:
+        logger.exception("Failed to reset player violation counter")
+        await state.clear()
+        await message.answer("⚠️ Не удалось сбросить счетчик нарушений. Попробуйте позже.")
 
 
 @router.message(ViolationStates.awaiting_violation_player_number)
@@ -359,6 +440,9 @@ async def manual_claimed_target_attack_selected(message: Message, state: FSMCont
             await session.commit()
         await state.clear()
         await message.answer(confirm_text)
+    except ValueError as exc:
+        await state.clear()
+        await message.answer(str(exc))
     except Exception:
         logger.exception("Failed to apply manual claimed_target violation")
         await state.clear()

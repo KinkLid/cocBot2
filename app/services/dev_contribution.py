@@ -20,6 +20,7 @@ from app.models.enums import ViolationCode, WarType
 from app.models import ClanMembershipHistory
 from app.domain.violation_rules import evaluate_attack_violation
 from app.repositories.stats import StatsRepository
+from app.services.active_violation_counter import ActiveViolationCounterService
 from app.utils.time import utcnow
 
 
@@ -42,6 +43,7 @@ class ContributionRankingRow:
     wars: int
     score: float
     newcomer: bool
+    active_violations: int = 0
 
 
 class ContributionDataUnavailableError(Exception):
@@ -53,6 +55,7 @@ class DevContributionService:
         self.session = session
         self.config = config
         self.repo = StatsRepository(session)
+        self.active_violation_counter = ActiveViolationCounterService(session)
 
     async def get_total_membership_duration(self, player_id: int) -> timedelta | None:
         now_utc = _normalize_utc(utcnow())
@@ -191,10 +194,22 @@ class DevContributionService:
                 opponent_positions=opponent_positions_by_war.get(war.id, []),
                 attacked_defender_positions=list(attacked_by_war.get(war.id, set())),
             )
+        active_counts = await self.active_violation_counter.counts_for_players(
+            [row.player_tag for row in stats_rows], period.start, period.end
+        )
         ranking: list[ContributionRankingRow] = []
         for row in stats_rows:
             newcomer = await self.is_newcomer(row.player_id) if hasattr(row, "player_id") else False
-            ranking.append(ContributionRankingRow(row.player_tag, row.player_name, row.wars, round(by_tag.get(row.player_tag, 0.0), 2), newcomer))
+            ranking.append(
+                ContributionRankingRow(
+                    row.player_tag,
+                    row.player_name,
+                    row.wars,
+                    round(by_tag.get(row.player_tag, 0.0), 2),
+                    newcomer,
+                    active_counts.get(row.player_tag, 0),
+                )
+            )
         return sorted(ranking, key=lambda x: (-x.score, x.player_name.casefold(), x.player_tag))
 
     def format_contribution_ranking(self, ranking: list[ContributionRankingRow]) -> str:
@@ -202,6 +217,9 @@ class DevContributionService:
             raise ContributionDataUnavailableError("⚠️ Общий вклад пока нельзя посчитать: в текущем цикле еще нет данных по атакам.")
         lines = ["🏆 Общий вклад", ""]
         for idx, row in enumerate(ranking, 1):
-            suffix = " 🆕 новенький" if row.newcomer else ""
-            lines.append(f"{idx}. {row.player_name} — {row.score:.2f}{suffix}")
+            violation_suffix = " ❌" if row.active_violations >= 3 else ""
+            newcomer_suffix = " 🆕 новенький" if row.newcomer else ""
+            lines.append(
+                f"{idx}. {row.player_name} — {row.score:.2f}{violation_suffix}{newcomer_suffix}"
+            )
         return "\n".join(lines)
