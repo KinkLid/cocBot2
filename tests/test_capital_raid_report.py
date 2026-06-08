@@ -67,7 +67,9 @@ async def test_current_cycle_uses_weekend_end_time_and_includes_whole_weekend(se
     service = CapitalRaidStatsService(session, app_yaml_config)
     rows, stats = await service.build_current_cycle_stats(period)
 
-    assert stats.completed_weekends == 1
+    assert stats.total_completed_weekends == 1
+    assert stats.weekends_with_participants == 1
+    assert stats.weekends_without_participants == 0
     assert rows == [
         {
             "player_tag": "#P1",
@@ -82,7 +84,8 @@ async def test_current_cycle_uses_weekend_end_time_and_includes_whole_weekend(se
     ]
     text = service.format_current_cycle_stats(period, rows, stats)
     assert "🏰 Столица" in text
-    assert "📦 Учтено рейдов столицы: 1" in text
+    assert "📦 Завершенных рейдов в цикле: 1" in text
+    assert "✅ Рейдов с данными участников: 1" in text
     assert "разрушение: 362%" in text
 
 
@@ -95,3 +98,63 @@ async def test_current_cycle_stats_empty_message(session, app_yaml_config):
     service = CapitalRaidStatsService(session, app_yaml_config)
     rows, stats = await service.build_current_cycle_stats(period)
     assert service.format_current_cycle_stats(period, rows, stats) == "⚠️ По столице за текущий цикл пока нет данных."
+
+
+@pytest.mark.asyncio
+async def test_current_cycle_reports_completed_weekends_without_participant_data(session, app_yaml_config):
+    period = SimpleNamespace(
+        start=datetime(2026, 5, 21, tzinfo=UTC),
+        end=datetime(2026, 6, 21, tzinfo=UTC),
+    )
+    weekends = [
+        weekend(
+            f"season-{index}",
+            datetime(2026, 5, 22 + index, tzinfo=UTC),
+            datetime(2026, 5, 23 + index, tzinfo=UTC),
+        )
+        for index in range(5)
+    ]
+    session.add_all(weekends)
+    await session.flush()
+    session.add(
+        CapitalRaidParticipant(
+            weekend_id=weekends[0].id, player_tag="#P1", player_name="Player", attacks=6,
+            attack_limit=6, bonus_attacks=1, districts_destroyed=3,
+            total_destruction_percent=540, capital_resources_looted=0,
+        )
+    )
+    await session.commit()
+
+    service = CapitalRaidStatsService(session, app_yaml_config)
+    rows, stats = await service.build_current_cycle_stats(period)
+    text = service.format_current_cycle_stats(period, rows, stats)
+
+    assert stats.total_completed_weekends == 5
+    assert stats.weekends_with_participants == 1
+    assert stats.weekends_without_participants == 4
+    assert rows[0]["weekends_count"] == 1
+    assert "📦 Завершенных рейдов в цикле: 5" in text
+    assert "✅ Рейдов с данными участников: 1" in text
+    assert "⚠️ Рейдов без данных участников: 4" in text
+
+
+@pytest.mark.asyncio
+async def test_current_cycle_completed_weekends_without_any_participants_message(session, app_yaml_config):
+    period = SimpleNamespace(
+        start=datetime(2026, 5, 21, tzinfo=UTC),
+        end=datetime(2026, 6, 21, tzinfo=UTC),
+    )
+    session.add(
+        weekend("empty", datetime(2026, 5, 22, tzinfo=UTC), datetime(2026, 5, 24, tzinfo=UTC))
+    )
+    await session.commit()
+    service = CapitalRaidStatsService(session, app_yaml_config)
+
+    rows, stats = await service.build_current_cycle_stats(period)
+
+    assert stats.total_completed_weekends == 1
+    assert stats.weekends_with_participants == 0
+    assert stats.weekends_without_participants == 1
+    assert service.format_current_cycle_stats(period, rows, stats) == (
+        "⚠️ В текущем цикле есть завершенные рейды столицы, но по ним нет данных участников."
+    )
