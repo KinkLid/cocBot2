@@ -542,7 +542,7 @@ async def manual_claimed_target_start(message: Message, state: FSMContext, app_c
             return
         await state.update_data(player_options=[{"player_tag": p.player_tag, "player_name": p.player_name} for p in players])
         await state.set_state(ManualViolationStates.awaiting_claimed_target_player)
-        await message.answer(service.format_players_for_selection(players))
+        await message.answer(service.format_players_for_selection(players), reply_markup=back_keyboard())
 
 
 @router.message(ManualViolationStates.awaiting_claimed_target_player)
@@ -579,7 +579,10 @@ async def manual_claimed_target_player_selected(message: Message, state: FSMCont
                 return
             await state.update_data(selected_player=selected, attack_options=[{"attack_id": a.id} for a, _, _ in attacks])
             await state.set_state(ManualViolationStates.awaiting_claimed_target_attack)
-            await message.answer(service.format_attacks_for_selection(selected["player_name"], attacks))
+            await message.answer(
+                service.format_attacks_for_selection(selected["player_name"], attacks),
+                reply_markup=back_keyboard(),
+            )
     except Exception:
         logger.exception("Failed to load attacks for manual claimed_target selection")
         await message.answer("⚠️ Не удалось загрузить атаки игрока. Попробуйте позже.")
@@ -604,7 +607,7 @@ async def manual_claimed_target_attack_selected(message: Message, state: FSMCont
                 await state.clear()
                 await message.answer("⚠️ В текущем цикле нет игроков с атаками.")
                 return
-            await message.answer(service.format_players_for_selection(players_live))
+            await message.answer(service.format_players_for_selection(players_live), reply_markup=back_keyboard())
         return
     try:
         idx = int(text)

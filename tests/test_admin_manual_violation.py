@@ -43,10 +43,24 @@ async def test_manual_violation_flow(session, app_context):
     start_msg = FakeMessage(text="🚩 Чужой флажок", user_id=1)
     await manual_claimed_target_start(start_msg, state, app_context)
     assert state.state == str(ManualViolationStates.awaiting_claimed_target_player)
+    assert "⬅️ Назад" not in start_msg.answer.await_args.args[0]
+    assert start_msg.answer.await_args.kwargs["reply_markup"].keyboard[0][0].text == "⬅️ Назад"
 
     bad_player_msg = FakeMessage(text="99", user_id=1)
     await manual_claimed_target_player_selected(bad_player_msg, state, app_context)
     assert "Нет игрока" in bad_player_msg.answer.await_args.args[0]
+
+    choose_player_msg = FakeMessage(text="1", user_id=1)
+    await manual_claimed_target_player_selected(choose_player_msg, state, app_context)
+    assert state.state == str(ManualViolationStates.awaiting_claimed_target_attack)
+    assert "⬅️ Назад" not in choose_player_msg.answer.await_args.args[0]
+    assert choose_player_msg.answer.await_args.kwargs["reply_markup"].keyboard[0][0].text == "⬅️ Назад"
+
+    back_to_players_msg = FakeMessage(text="⬅️ Назад", user_id=1)
+    await manual_claimed_target_attack_selected(back_to_players_msg, state, app_context)
+    assert state.state == str(ManualViolationStates.awaiting_claimed_target_player)
+    assert "⬅️ Назад" not in back_to_players_msg.answer.await_args.args[0]
+    assert back_to_players_msg.answer.await_args.kwargs["reply_markup"].keyboard[0][0].text == "⬅️ Назад"
 
     choose_player_msg = FakeMessage(text="1", user_id=1)
     await manual_claimed_target_player_selected(choose_player_msg, state, app_context)

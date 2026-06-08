@@ -52,8 +52,6 @@ class ManualViolationService:
         lines = ["🚩 Чужой флажок", "Выберите игрока по номеру.", ""]
         for idx, player in enumerate(players, 1):
             lines.append(f"{idx}. {player.player_name} — атак: {player.attacks_count}")
-        lines.append("")
-        lines.append("⬅️ Назад")
         return "\n".join(lines)
 
     async def list_player_attacks_for_current_cycle(self, player_tag: str):
@@ -68,8 +66,6 @@ class ManualViolationService:
             lines.append(
                 f"{idx}. {attack.observed_at:%Y-%m-%d %H:%M} | {war_label} | {attack.attacker_position} -> {attack.defender_position} | {attack.stars}⭐ {int(attack.destruction)}%{suffix}"
             )
-        lines.append("")
-        lines.append("⬅️ Назад")
         return "\n".join(lines)
 
     async def apply_claimed_target_violation(self, attack_id: int, admin_telegram_id: int) -> str:
