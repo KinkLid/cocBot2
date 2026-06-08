@@ -46,6 +46,7 @@ class ContributionRankingRow:
     newcomer: bool
     active_violations: int = 0
     donations: int = 0
+    donation_points: float = 0.0
 
 
 @dataclass(slots=True)
@@ -267,11 +268,12 @@ class DevContributionService:
                 row.player_tag, period.start, period.end
             )
             donations_by_tag[row.player_tag] = donations
+            donation_points = round(donations * 0.01, 2)
             components_by_tag[row.player_tag].append(
                 ContributionScoreComponent(
                     kind="donations",
                     player_tag=row.player_tag,
-                    score_delta=float(donations),
+                    score_delta=donation_points,
                 )
             )
 
@@ -296,6 +298,9 @@ class DevContributionService:
                     newcomer=newcomer,
                     active_violations=calculation.active_violations_by_tag.get(row.player_tag, 0),
                     donations=calculation.donations_by_tag.get(row.player_tag, 0),
+                    donation_points=round(
+                        calculation.donations_by_tag.get(row.player_tag, 0) * 0.01, 2
+                    ),
                 )
             )
         return sorted(ranking, key=lambda x: (-x.score, x.player_name.casefold(), x.player_tag))
@@ -308,6 +313,8 @@ class DevContributionService:
             violation_suffix = " ❌" if row.active_violations >= 3 else ""
             newcomer_suffix = " 🆕 новенький" if row.newcomer else ""
             lines.append(
-                f"{idx}. {row.player_name} — {row.score:.2f} | донат: {row.donations}{violation_suffix}{newcomer_suffix}"
+                f"{idx}. {row.player_name} — {row.score:.2f} | "
+                f"донат: {row.donations} (+{row.donation_points:.2f})"
+                f"{violation_suffix}{newcomer_suffix}"
             )
         return "\n".join(lines)

@@ -6,6 +6,8 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
+
 from app.bot.handlers.admin import (
     contribution_breakdown_selected,
     contribution_breakdown_start,
@@ -48,7 +50,7 @@ def _war(war_id: int, war_type: WarType, end_time: datetime):
     return SimpleNamespace(id=war_id, war_type=war_type, end_time=end_time)
 
 
-def _calculation(*, donation: int = 37, include_items: bool = True) -> ContributionCalculation:
+def _calculation(*, donation: int = 380, include_items: bool = True) -> ContributionCalculation:
     regular_war = _war(1, WarType.REGULAR, NOW - timedelta(days=3))
     cwl_war = _war(2, WarType.CWL, NOW - timedelta(days=2))
     components = []
@@ -80,7 +82,9 @@ def _calculation(*, donation: int = 37, include_items: bool = True) -> Contribut
         )
     components.append(
         ContributionScoreComponent(
-            kind="donations", player_tag="#P1", score_delta=float(donation)
+            kind="donations",
+            player_tag="#P1",
+            score_delta=round(donation * 0.01, 2),
         )
     )
     return ContributionCalculation(
@@ -107,8 +111,8 @@ def test_short_breakdown_shows_all_totals(monkeypatch):
 
     assert "Атаки: +24.30" in text
     assert "Неиспользованные атаки: -10.00" in text
-    assert "Донаты: +37" in text
-    assert "Итого: 51.30" in text
+    assert "Донаты: +3.80 (сырой донат: 380)" in text
+    assert "Итого: 18.10" in text
 
 
 def test_detailed_breakdown_has_regular_cwl_penalty_donation_and_violation(monkeypatch):
@@ -119,7 +123,8 @@ def test_detailed_breakdown_has_regular_cwl_penalty_donation_and_violation(monke
     assert "КВ | 1 -> 4 | 3⭐ 100%" in text
     assert "ЛВК | 1 -> 3 | 3⭐ 100% | Нарушение: above_self" in text
     assert "Штраф за неиспользованную атаку | КВ" in text
-    assert "Донаты войск за цикл" in text
+    assert "Донаты войск за цикл | Сырой донат: 380" in text
+    assert "+3.80" in text
 
 
 def test_breakdown_final_score_matches_dev_contribution_ranking(monkeypatch):
@@ -137,16 +142,26 @@ def test_breakdown_final_score_matches_dev_contribution_ranking(monkeypatch):
     assert breakdown.final_score == ranking[0].score
 
 
-def test_donation_only_and_zero_breakdowns(monkeypatch):
-    donation_service = _service(monkeypatch, _calculation(donation=37, include_items=False))
-    donation_breakdown = asyncio.run(donation_service.build_player_breakdown("#P1", PERIOD))
-    assert donation_breakdown.final_score == 37
-    assert donation_breakdown.attack_score_total == 0
+@pytest.mark.parametrize(
+    ("raw_donations", "donation_points"),
+    [(0, 0.0), (1, 0.01), (10, 0.1), (100, 1.0), (380, 3.8)],
+)
+def test_donation_only_breakdown_uses_weighted_points(
+    monkeypatch, raw_donations, donation_points
+):
+    service = _service(
+        monkeypatch, _calculation(donation=raw_donations, include_items=False)
+    )
+    breakdown = asyncio.run(service.build_player_breakdown("#P1", PERIOD))
 
-    zero_service = _service(monkeypatch, _calculation(donation=0, include_items=False))
-    zero_breakdown = asyncio.run(zero_service.build_player_breakdown("#P1", PERIOD))
-    assert zero_breakdown.final_score == 0
-    assert "Итого: 0.00" in zero_service.format_short_breakdown(zero_breakdown)
+    assert breakdown.final_score == donation_points
+    assert breakdown.donation_total == raw_donations
+    assert breakdown.donation_score_total == donation_points
+    assert breakdown.attack_score_total == 0
+    assert (
+        f"Донаты: +{donation_points:.2f} (сырой донат: {raw_donations})"
+        in service.format_short_breakdown(breakdown)
+    )
 
 
 class _Context:
