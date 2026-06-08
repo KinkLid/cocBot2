@@ -25,6 +25,7 @@ from app.services.period import PeriodService
 from app.services.registration import RegistrationService
 from app.services.manual_violation import ManualViolationService
 from app.services.stats import StatsService
+from app.repositories.player_account import PlayerAccountRepository
 from app.repositories.telegram_user import TelegramUserRepository
 from app.repositories.violation_counter_reset import ViolationCounterResetRepository
 from app.utils.time import utcnow
@@ -119,7 +120,9 @@ async def dev_contribution(message: Message, app_context: AppContext) -> None:
 
 
 @router.message(F.text == "📋 Мой вклад")
-async def my_contribution_breakdown(message: Message, app_context: AppContext) -> None:
+async def my_contribution_breakdown(
+    message: Message, state: FSMContext, app_context: AppContext
+) -> None:
     async with app_context.session_maker() as session:
         user_repo = TelegramUserRepository(session)
         telegram_user = await user_repo.get_by_telegram_id(message.from_user.id)
@@ -127,11 +130,95 @@ async def my_contribution_breakdown(message: Message, app_context: AppContext) -
         if not links:
             await message.answer("⚠️ Вы еще не привязаны к участнику клана.")
             return
+        if len(links) > 1:
+            player_repo = PlayerAccountRepository(session)
+            options = []
+            for link in links:
+                player = await player_repo.get_by_tag(link.player_tag)
+                options.append(
+                    {
+                        "player_tag": link.player_tag,
+                        "player_name": player.name if player is not None else link.player_tag,
+                    }
+                )
+            await state.update_data(my_contribution_options=options)
+            await state.set_state(
+                ContributionBreakdownStates.awaiting_my_contribution_player_number
+            )
+            account_lines = [
+                f"{index}. {option['player_name']} ({option['player_tag']})"
+                for index, option in enumerate(options, start=1)
+            ]
+            text = "\n".join(
+                [
+                    "📋 Мой вклад",
+                    "У вас привязано несколько аккаунтов.",
+                    "Выберите аккаунт по номеру.",
+                    "",
+                    *account_lines,
+                    "",
+                    "Введите номер аккаунта или нажмите ⬅️ Назад.",
+                ]
+            )
+            await send_long_message(message, text, reply_markup=back_keyboard())
+            return
         period = await PeriodService(session).current_cycle()
         service = ContributionBreakdownService(session, app_context.config)
         breakdown = await service.build_player_breakdown(links[0].player_tag, period)
         text = service.format_short_breakdown(breakdown)
     await send_long_message(message, text)
+
+
+@router.message(ContributionBreakdownStates.awaiting_my_contribution_player_number)
+async def my_contribution_breakdown_selected(
+    message: Message, state: FSMContext, app_context: AppContext
+) -> None:
+    text = (message.text or "").strip()
+    if text == "⬅️ Назад":
+        await state.clear()
+        async with app_context.session_maker() as session:
+            is_registered = await RegistrationService(
+                session, app_context.clash_client
+            ).is_registered(message.from_user.id)
+        await message.answer(
+            "Главное меню",
+            reply_markup=main_menu(
+                app_context.auth_service.is_admin(message.from_user.id), is_registered
+            ),
+        )
+        return
+
+    try:
+        player_number = int(text)
+    except ValueError:
+        await message.answer(
+            "⚠️ Введите номер аккаунта из списка или нажмите ⬅️ Назад."
+        )
+        return
+
+    data = await state.get_data()
+    options = data.get("my_contribution_options", [])
+    if player_number < 1 or player_number > len(options):
+        await message.answer("⚠️ Нет аккаунта с таким номером.")
+        return
+
+    selected = options[player_number - 1]
+    try:
+        async with app_context.session_maker() as session:
+            period = await PeriodService(session).current_cycle()
+            service = ContributionBreakdownService(session, app_context.config)
+            breakdown = await service.build_player_breakdown(
+                selected["player_tag"], period
+            )
+            report = service.format_short_breakdown(breakdown)
+        await send_long_message(message, report)
+        await state.clear()
+    except Exception:
+        logger.exception("Failed to load my contribution breakdown for selected account")
+        await message.answer(
+            "⚠️ Не удалось загрузить вклад по выбранному аккаунту. Попробуйте позже."
+        )
+        await state.clear()
 
 
 @router.message(F.text == "🧾 Разбор вклада")
