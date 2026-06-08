@@ -320,8 +320,7 @@ class DevContributionService:
             violation_suffix = " ❌" if row.active_violations >= 3 else ""
             newcomer_suffix = " 🆕 новенький" if row.newcomer else ""
             lines.append(
-                f"{idx}. {row.player_name} — {row.score:.2f} | "
-                f"донат: {row.donations} (+{row.donation_points:.2f})"
+                f"{idx}. {row.player_name} — {row.score:.2f}"
                 f"{violation_suffix}{newcomer_suffix}"
             )
         return "\n".join(lines)
