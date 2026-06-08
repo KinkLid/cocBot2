@@ -10,7 +10,9 @@ from app.bot.handlers.admin import (
     contribution_breakdown_selected,
     contribution_breakdown_start,
     my_contribution_breakdown,
+    my_contribution_breakdown_selected,
 )
+from app.bot.states.contribution_breakdown import ContributionBreakdownStates
 from app.models.enums import ViolationCode, WarType
 from app.services.auth import AuthService
 from app.services.contribution_breakdown import ContributionBreakdownService
@@ -22,6 +24,7 @@ from app.services.dev_contribution import (
 )
 from app.services.period import PeriodService
 from app.services.registration import RegistrationService
+from app.repositories.player_account import PlayerAccountRepository
 from app.repositories.telegram_user import TelegramUserRepository
 from tests.fakes import FakeMessage, FakeState
 
@@ -158,12 +161,203 @@ class _Context:
 
 
 def test_my_contribution_reports_unlinked_user(app_yaml_config, monkeypatch):
-    monkeypatch.setattr(TelegramUserRepository, "get_by_telegram_id", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        TelegramUserRepository,
+        "get_by_telegram_id",
+        AsyncMock(return_value=SimpleNamespace(id=1)),
+    )
+    monkeypatch.setattr(TelegramUserRepository, "get_links", AsyncMock(return_value=[]))
     message = FakeMessage("📋 Мой вклад", user_id=777)
+    state = FakeState()
 
-    asyncio.run(my_contribution_breakdown(message, _Context(app_yaml_config)))
+    asyncio.run(my_contribution_breakdown(message, state, _Context(app_yaml_config)))
 
     message.answer.assert_awaited_once_with("⚠️ Вы еще не привязаны к участнику клана.")
+    assert state.state is None
+
+
+def test_my_contribution_single_account_shows_breakdown_without_state(
+    app_yaml_config, monkeypatch
+):
+    link = SimpleNamespace(player_tag="#P1")
+    monkeypatch.setattr(
+        TelegramUserRepository,
+        "get_by_telegram_id",
+        AsyncMock(return_value=SimpleNamespace(id=1)),
+    )
+    monkeypatch.setattr(TelegramUserRepository, "get_links", AsyncMock(return_value=[link]))
+    monkeypatch.setattr(PeriodService, "current_cycle", AsyncMock(return_value=PERIOD))
+    build_breakdown = AsyncMock(return_value=SimpleNamespace())
+    monkeypatch.setattr(
+        ContributionBreakdownService, "build_player_breakdown", build_breakdown
+    )
+    monkeypatch.setattr(
+        ContributionBreakdownService,
+        "format_short_breakdown",
+        lambda self, breakdown: "short report",
+    )
+    message = FakeMessage("📋 Мой вклад", user_id=777)
+    state = FakeState()
+
+    asyncio.run(my_contribution_breakdown(message, state, _Context(app_yaml_config)))
+
+    build_breakdown.assert_awaited_once_with("#P1", PERIOD)
+    message.answer.assert_awaited_once_with("short report")
+    assert state.state is None
+    assert state._data == {}
+
+
+def test_my_contribution_multiple_accounts_shows_options_and_sets_state(
+    app_yaml_config, monkeypatch
+):
+    links = [SimpleNamespace(player_tag="#P1"), SimpleNamespace(player_tag="#P2")]
+    players = {
+        "#P1": SimpleNamespace(name="Nickname1"),
+        "#P2": SimpleNamespace(name="Nickname2"),
+    }
+    monkeypatch.setattr(
+        TelegramUserRepository,
+        "get_by_telegram_id",
+        AsyncMock(return_value=SimpleNamespace(id=1)),
+    )
+    monkeypatch.setattr(TelegramUserRepository, "get_links", AsyncMock(return_value=links))
+    monkeypatch.setattr(
+        PlayerAccountRepository,
+        "get_by_tag",
+        AsyncMock(side_effect=lambda tag: players[tag]),
+    )
+    message = FakeMessage("📋 Мой вклад", user_id=777)
+    state = FakeState()
+
+    asyncio.run(my_contribution_breakdown(message, state, _Context(app_yaml_config)))
+
+    sent = message.answer.await_args.args[0]
+    assert "📋 Мой вклад" in sent
+    assert "1. Nickname1 (#P1)" in sent
+    assert "2. Nickname2 (#P2)" in sent
+    assert "Введите номер аккаунта или нажмите ⬅️ Назад." in sent
+    assert state.state == str(
+        ContributionBreakdownStates.awaiting_my_contribution_player_number
+    )
+    assert state._data["my_contribution_options"] == [
+        {"player_tag": "#P1", "player_name": "Nickname1"},
+        {"player_tag": "#P2", "player_name": "Nickname2"},
+    ]
+
+
+def _my_contribution_selection_state() -> FakeState:
+    state = FakeState()
+    asyncio.run(
+        state.update_data(
+            my_contribution_options=[
+                {"player_tag": "#P1", "player_name": "Nickname1"},
+                {"player_tag": "#P2", "player_name": "Nickname2"},
+            ]
+        )
+    )
+    asyncio.run(
+        state.set_state(
+            ContributionBreakdownStates.awaiting_my_contribution_player_number
+        )
+    )
+    return state
+
+
+def test_my_contribution_valid_number_shows_selected_breakdown_and_clears_state(
+    app_yaml_config, monkeypatch
+):
+    monkeypatch.setattr(PeriodService, "current_cycle", AsyncMock(return_value=PERIOD))
+    build_breakdown = AsyncMock(return_value=SimpleNamespace())
+    monkeypatch.setattr(
+        ContributionBreakdownService, "build_player_breakdown", build_breakdown
+    )
+    monkeypatch.setattr(
+        ContributionBreakdownService,
+        "format_short_breakdown",
+        lambda self, breakdown: "selected short report",
+    )
+    message = FakeMessage("2", user_id=777)
+    state = _my_contribution_selection_state()
+
+    asyncio.run(
+        my_contribution_breakdown_selected(message, state, _Context(app_yaml_config))
+    )
+
+    build_breakdown.assert_awaited_once_with("#P2", PERIOD)
+    message.answer.assert_awaited_once_with("selected short report")
+    assert state.state is None
+    assert state._data == {}
+
+
+def test_my_contribution_selected_account_error_clears_state(
+    app_yaml_config, monkeypatch
+):
+    monkeypatch.setattr(PeriodService, "current_cycle", AsyncMock(return_value=PERIOD))
+    monkeypatch.setattr(
+        ContributionBreakdownService,
+        "build_player_breakdown",
+        AsyncMock(side_effect=RuntimeError("boom")),
+    )
+    message = FakeMessage("1", user_id=777)
+    state = _my_contribution_selection_state()
+
+    asyncio.run(
+        my_contribution_breakdown_selected(message, state, _Context(app_yaml_config))
+    )
+
+    message.answer.assert_awaited_once_with(
+        "⚠️ Не удалось загрузить вклад по выбранному аккаунту. Попробуйте позже."
+    )
+    assert state.state is None
+    assert state._data == {}
+
+
+def test_my_contribution_non_numeric_value_keeps_state(app_yaml_config):
+    message = FakeMessage("abc", user_id=777)
+    state = _my_contribution_selection_state()
+
+    asyncio.run(
+        my_contribution_breakdown_selected(message, state, _Context(app_yaml_config))
+    )
+
+    message.answer.assert_awaited_once_with(
+        "⚠️ Введите номер аккаунта из списка или нажмите ⬅️ Назад."
+    )
+    assert state.state == str(
+        ContributionBreakdownStates.awaiting_my_contribution_player_number
+    )
+    assert state._data["my_contribution_options"]
+
+
+def test_my_contribution_out_of_range_number_keeps_state(app_yaml_config):
+    message = FakeMessage("3", user_id=777)
+    state = _my_contribution_selection_state()
+
+    asyncio.run(
+        my_contribution_breakdown_selected(message, state, _Context(app_yaml_config))
+    )
+
+    message.answer.assert_awaited_once_with("⚠️ Нет аккаунта с таким номером.")
+    assert state.state == str(
+        ContributionBreakdownStates.awaiting_my_contribution_player_number
+    )
+    assert state._data["my_contribution_options"]
+
+
+def test_my_contribution_back_clears_state_and_returns_menu(
+    app_yaml_config, monkeypatch
+):
+    monkeypatch.setattr(RegistrationService, "is_registered", AsyncMock(return_value=True))
+    message = FakeMessage("⬅️ Назад", user_id=777)
+    state = _my_contribution_selection_state()
+
+    asyncio.run(
+        my_contribution_breakdown_selected(message, state, _Context(app_yaml_config))
+    )
+
+    assert state.state is None
+    assert state._data == {}
+    assert message.answer.await_args.args[0] == "Главное меню"
 
 
 def test_admin_breakdown_is_admin_only(app_yaml_config):
