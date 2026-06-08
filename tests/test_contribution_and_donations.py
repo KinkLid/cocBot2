@@ -99,6 +99,8 @@ def test_admin_menu_buttons_updated():
     flat = [b.text for row in main_menu(is_admin=True, is_registered=True).keyboard for b in row]
     assert "🧪 Dev-вклад" not in flat
     assert "🏆 Общий вклад" in flat
+    assert "📋 Мой вклад" in flat
+    assert "🧾 Разбор вклада" in flat
     assert "🏰 Столица" in flat
     assert "🧪 Dev-донаты" in flat
     assert "🚨 Нарушения" in flat
@@ -108,6 +110,8 @@ def test_admin_menu_buttons_updated():
 def test_public_contribution_button_and_admin_buttons_for_non_admin():
     flat = [b.text for row in main_menu(is_admin=False, is_registered=True).keyboard for b in row]
     assert "🏆 Общий вклад" in flat
+    assert "📋 Мой вклад" in flat
+    assert "🧾 Разбор вклада" not in flat
     assert "🚨 Нарушения" not in flat
     assert "♻️ Сбросить счетчик нарушений" not in flat
     assert "🏰 Столица" not in flat

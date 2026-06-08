@@ -12,12 +12,14 @@ def main_menu(is_admin: bool, is_registered: bool) -> ReplyKeyboardMarkup:
             [KeyboardButton(text="🔗 Ссылка на чат клана")],
             [KeyboardButton(text="📊 Моя статистика")],
             [KeyboardButton(text="🏆 Общий вклад")],
+            [KeyboardButton(text="📋 Мой вклад")],
         ]
     )
     if is_admin:
         rows.extend(
             [
                 [KeyboardButton(text="👥 Список игроков")],
+                [KeyboardButton(text="🧾 Разбор вклада")],
                 [KeyboardButton(text="📈 Статистика клана")],
                 [KeyboardButton(text="📦 Выгрузка JSON")],
                 [KeyboardButton(text="🏰 Столица"), KeyboardButton(text="🧪 Dev вклад в столицу"), KeyboardButton(text="🧪 Dev-донаты")],
@@ -29,3 +31,10 @@ def main_menu(is_admin: bool, is_registered: bool) -> ReplyKeyboardMarkup:
             ]
         )
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+
+
+def back_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="⬅️ Назад")]],
+        resize_keyboard=True,
+    )

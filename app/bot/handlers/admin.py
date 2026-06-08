@@ -7,15 +7,17 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, FSInputFile, Message
 
 from app.bot.keyboards.common import admin_sort_keyboard
-from app.bot.keyboards.main import main_menu
+from app.bot.keyboards.main import back_keyboard, main_menu
 from app.bot.utils.telegram_text import edit_or_send_long_message, send_long_message
 from app.bot.states.chat_link import ChatLinkStates
+from app.bot.states.contribution_breakdown import ContributionBreakdownStates
 from app.bot.states.manual_violation import ManualViolationStates
 from app.bot.states.violations import ViolationStates
 from app.container import AppContext
 from app.services.clan_chat import ClanChatService
 from app.services.capital_raid_report import CapitalRaidStatsService
 from app.services.capital_raid_contribution import CapitalRaidContributionService
+from app.services.contribution_breakdown import ContributionBreakdownService
 from app.services.dev_contribution import ContributionDataUnavailableError, DevContributionService
 from app.services.donations import DonationService
 from app.services.export import ExportService
@@ -23,6 +25,7 @@ from app.services.period import PeriodService
 from app.services.registration import RegistrationService
 from app.services.manual_violation import ManualViolationService
 from app.services.stats import StatsService
+from app.repositories.telegram_user import TelegramUserRepository
 from app.repositories.violation_counter_reset import ViolationCounterResetRepository
 from app.utils.time import utcnow
 
@@ -113,6 +116,99 @@ async def dev_contribution(message: Message, app_context: AppContext) -> None:
     except Exception:
         logger.exception("Failed to build dev contribution report")
         await message.answer(CONTRIBUTION_BUILD_ERROR)
+
+
+@router.message(F.text == "📋 Мой вклад")
+async def my_contribution_breakdown(message: Message, app_context: AppContext) -> None:
+    async with app_context.session_maker() as session:
+        user_repo = TelegramUserRepository(session)
+        telegram_user = await user_repo.get_by_telegram_id(message.from_user.id)
+        links = await user_repo.get_links(telegram_user.id) if telegram_user is not None else []
+        if not links:
+            await message.answer("⚠️ Вы еще не привязаны к участнику клана.")
+            return
+        period = await PeriodService(session).current_cycle()
+        service = ContributionBreakdownService(session, app_context.config)
+        breakdown = await service.build_player_breakdown(links[0].player_tag, period)
+        text = service.format_short_breakdown(breakdown)
+    await send_long_message(message, text)
+
+
+@router.message(F.text == "🧾 Разбор вклада")
+async def contribution_breakdown_start(
+    message: Message, state: FSMContext, app_context: AppContext
+) -> None:
+    try:
+        _ensure_admin(app_context, message.from_user.id)
+    except PermissionError:
+        await message.answer("⛔ Недостаточно прав")
+        return
+    async with app_context.session_maker() as session:
+        period = await PeriodService(session).current_cycle()
+        service = DevContributionService(session, app_context.config)
+        ranking = await service.build_contribution_ranking(period)
+        text = service.format_contribution_ranking(ranking)
+    await state.update_data(
+        contribution_breakdown_players=[
+            {"player_tag": row.player_tag, "player_name": row.player_name} for row in ranking
+        ]
+    )
+    await state.set_state(ContributionBreakdownStates.awaiting_player_number)
+    await send_long_message(
+        message,
+        text
+        + "\n\nВведите номер игрока, чтобы посмотреть подробную расшифровку вклада."
+        + "\nИли нажмите ⬅️ Назад.",
+        reply_markup=back_keyboard(),
+    )
+
+
+@router.message(ContributionBreakdownStates.awaiting_player_number)
+async def contribution_breakdown_selected(
+    message: Message, state: FSMContext, app_context: AppContext
+) -> None:
+    try:
+        _ensure_admin(app_context, message.from_user.id)
+    except PermissionError:
+        await message.answer("⛔ Недостаточно прав")
+        await state.clear()
+        return
+
+    text = (message.text or "").strip()
+    if text == "⬅️ Назад":
+        await state.clear()
+        async with app_context.session_maker() as session:
+            is_registered = await RegistrationService(
+                session, app_context.clash_client
+            ).is_registered(message.from_user.id)
+        await message.answer("Главное меню", reply_markup=main_menu(True, is_registered))
+        return
+
+    try:
+        player_number = int(text)
+    except ValueError:
+        await message.answer("⚠️ Введите номер игрока из списка или нажмите ⬅️ Назад.")
+        return
+
+    data = await state.get_data()
+    players = data.get("contribution_breakdown_players", [])
+    if player_number < 1 or player_number > len(players):
+        await message.answer("⚠️ Нет игрока с таким номером.")
+        return
+
+    selected = players[player_number - 1]
+    async with app_context.session_maker() as session:
+        period = await PeriodService(session).current_cycle()
+        service = ContributionBreakdownService(session, app_context.config)
+        breakdown = await service.build_player_breakdown(selected["player_tag"], period)
+        report = service.format_detailed_breakdown(breakdown)
+        is_registered = await RegistrationService(
+            session, app_context.clash_client
+        ).is_registered(message.from_user.id)
+    await state.clear()
+    await send_long_message(
+        message, report, reply_markup=main_menu(True, is_registered)
+    )
 
 
 @router.message(F.text == "✏️ Обновить ссылку на чат")
