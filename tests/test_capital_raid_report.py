@@ -1,198 +1,97 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 
-from app.models import CapitalRaidParticipant, CapitalRaidWeekend, PlayerCapitalContributionSnapshot
-from app.services.capital_raid_report import CapitalRaidReportService
+from app.models import CapitalRaidParticipant, CapitalRaidViolation, CapitalRaidWeekend
+from app.services.capital_raid_report import CapitalRaidStatsService
 
 
-def _weekend(season: str, start_day: int, end_day: int) -> CapitalRaidWeekend:
+def weekend(season: str, start: datetime, end: datetime) -> CapitalRaidWeekend:
     return CapitalRaidWeekend(
         clan_tag="#CLAN",
         raid_season_id=season,
         state="ended",
-        start_time=datetime(2026, 5, start_day, tzinfo=UTC),
-        end_time=datetime(2026, 5, end_day, tzinfo=UTC),
+        start_time=start,
+        end_time=end,
         total_loot=0,
         total_attacks=0,
         enemy_districts_destroyed=0,
         offensive_reward=0,
         defensive_reward=0,
-        processed_at=datetime(2026, 5, end_day + 1, tzinfo=UTC),
+        processed_at=end,
     )
 
 
 @pytest.mark.asyncio
-async def test_build_recent_weekends_report_when_no_data(session, app_yaml_config):
-    text = await CapitalRaidReportService(session, app_yaml_config).build_recent_weekends_report(1)
-    assert text == "⚠️ По клановой столице пока нет сохраненных данных."
-
-
-@pytest.mark.asyncio
-async def test_build_recent_weekends_report_returns_error_when_requested_more_than_available(session, app_yaml_config):
-    session.add(_weekend("s1", 1, 3))
-    await session.commit()
-    text = await CapitalRaidReportService(session, app_yaml_config).build_recent_weekends_report(2)
-    assert text == "⚠️ В базе сейчас доступно только 1 завершенных рейдов."
-
-
-@pytest.mark.asyncio
-async def test_build_recent_weekends_report_aggregates_one_weekend(session, app_yaml_config):
-    w1 = _weekend("s1", 1, 3)
-    session.add(w1)
-    await session.flush()
-    session.add_all([
-        CapitalRaidParticipant(weekend_id=w1.id, player_id=None, player_tag="#A", player_name="Alpha", attacks=4, attack_limit=6, bonus_attacks=1, capital_resources_looted=1000, clan_capital_contributions_snapshot=0),
-        CapitalRaidParticipant(weekend_id=w1.id, player_id=None, player_tag="#B", player_name="Beta", attacks=2, attack_limit=6, bonus_attacks=0, capital_resources_looted=500, clan_capital_contributions_snapshot=0),
-    ])
-    session.add_all([
-        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 3, 0, tzinfo=UTC), value=100),
-        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 4, 0, tzinfo=UTC), value=250),
-    ])
-    await session.commit()
-
-    text = await CapitalRaidReportService(session, app_yaml_config).build_recent_weekends_report(1)
-    assert "📦 В базе завершенных рейдов: 1" in text
-    assert "📚 Запрошено последних рейдов: 1" in text
-    assert "✅ Рейдов с данными участников: 1" in text
-    assert "⚠️ Пустых рейдов без данных участников: 0" in text
-    assert "1. Alpha — атак: 4, бонусных: 1, налутал: 1000, вложил: 150" in text
-
-
-@pytest.mark.asyncio
-async def test_build_recent_weekends_report_aggregates_three_weekends_and_sorts(session, app_yaml_config):
-    w1, w2, w3 = _weekend("s1", 1, 3), _weekend("s2", 8, 10), _weekend("s3", 15, 17)
-    session.add_all([w1, w2, w3])
-    await session.flush()
-    session.add_all([
-        CapitalRaidParticipant(weekend_id=w1.id, player_id=None, player_tag="#A", player_name="Alpha", attacks=1, attack_limit=6, bonus_attacks=0, capital_resources_looted=100, clan_capital_contributions_snapshot=0),
-        CapitalRaidParticipant(weekend_id=w2.id, player_id=None, player_tag="#A", player_name="Alpha", attacks=3, attack_limit=6, bonus_attacks=1, capital_resources_looted=300, clan_capital_contributions_snapshot=0),
-        CapitalRaidParticipant(weekend_id=w3.id, player_id=None, player_tag="#A", player_name="Alpha", attacks=1, attack_limit=6, bonus_attacks=1, capital_resources_looted=50, clan_capital_contributions_snapshot=0),
-        CapitalRaidParticipant(weekend_id=w1.id, player_id=None, player_tag="#B", player_name="Beta", attacks=5, attack_limit=6, bonus_attacks=1, capital_resources_looted=450, clan_capital_contributions_snapshot=0),
-        CapitalRaidParticipant(weekend_id=w2.id, player_id=None, player_tag="#C", player_name="Aardvark", attacks=4, attack_limit=6, bonus_attacks=0, capital_resources_looted=450, clan_capital_contributions_snapshot=0),
-    ])
-    session.add_all([
-        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 3, 0, tzinfo=UTC), value=10),
-        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 20, 0, tzinfo=UTC), value=40),
-        PlayerCapitalContributionSnapshot(player_tag="#B", clan_tag="#CLAN", observed_at=datetime(2026, 5, 18, 0, tzinfo=UTC), value=60),
-        PlayerCapitalContributionSnapshot(player_tag="#B", clan_tag="#CLAN", observed_at=datetime(2026, 5, 19, 0, tzinfo=UTC), value=65),
-    ])
-    await session.commit()
-
-    text = await CapitalRaidReportService(session, app_yaml_config).build_recent_weekends_report(3)
-    lines = [line for line in text.splitlines() if line[:1].isdigit()]
-    assert "Beta" in lines[0]
-    assert "Aardvark" in lines[1]
-    assert "Alpha" in lines[2]
-    assert "Alpha — атак: 5, бонусных: 2, налутал: 450, вложил: 30" in text
-    assert "Aardvark — атак: 4, бонусных: 0, налутал: 450, вложил: 0*" in text
-    assert "* по этим игрокам пока недостаточно накопленных snapshot’ов для точного расчета вложений" in text
-
-
-@pytest.mark.asyncio
-async def test_build_recent_weekends_report_invested_without_star_when_snapshots_enough(session, app_yaml_config):
-    w1 = _weekend("s1", 1, 3)
-    session.add(w1)
-    await session.flush()
-    session.add(
-        CapitalRaidParticipant(weekend_id=w1.id, player_id=None, player_tag="#A", player_name="Alpha", attacks=1, attack_limit=6, bonus_attacks=0, capital_resources_looted=100, clan_capital_contributions_snapshot=0)
+async def test_current_cycle_uses_weekend_end_time_and_includes_whole_weekend(session, app_yaml_config):
+    period = SimpleNamespace(
+        start=datetime(2026, 5, 21, tzinfo=UTC),
+        end=datetime(2026, 6, 21, tzinfo=UTC),
     )
-    session.add_all([
-        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 3, 0, tzinfo=UTC), value=50),
-        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 4, 0, tzinfo=UTC), value=50),
-    ])
-    await session.commit()
-
-    text = await CapitalRaidReportService(session, app_yaml_config).build_recent_weekends_report(1)
-    assert "Alpha — атак: 1, бонусных: 0, налутал: 100, вложил: 0" in text
-    assert "вложил: 0*" not in text
-
-
-@pytest.mark.asyncio
-async def test_build_recent_weekends_report_shows_data_and_empty_counts(session, app_yaml_config):
-    w1, w2, w3 = _weekend("s1", 1, 3), _weekend("s2", 8, 10), _weekend("s3", 15, 17)
-    session.add_all([w1, w2, w3])
-    await session.flush()
-    session.add(
-        CapitalRaidParticipant(weekend_id=w1.id, player_id=None, player_tag="#A", player_name="Alpha", attacks=6, attack_limit=6, bonus_attacks=1, capital_resources_looted=1000, clan_capital_contributions_snapshot=0)
+    previous = weekend(
+        "previous",
+        datetime(2026, 5, 16, tzinfo=UTC),
+        datetime(2026, 5, 18, tzinfo=UTC),
     )
-    session.add_all([
-        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 3, 0, tzinfo=UTC), value=100),
-        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 4, 0, tzinfo=UTC), value=120),
-    ])
-    await session.commit()
-
-    text = await CapitalRaidReportService(session, app_yaml_config).build_recent_weekends_report(3)
-    assert "📚 Запрошено последних рейдов: 3" in text
-    assert "✅ Рейдов с данными участников: 1" in text
-    assert "⚠️ Пустых рейдов без данных участников: 2" in text
-
-
-@pytest.mark.asyncio
-async def test_build_recent_weekends_report_lists_empty_weekends(session, app_yaml_config):
-    w1, w2, w3 = _weekend("s1", 1, 3), _weekend("s2", 8, 10), _weekend("s3", 15, 17)
-    session.add_all([w1, w2, w3])
-    await session.flush()
-    session.add(
-        CapitalRaidParticipant(weekend_id=w1.id, player_id=None, player_tag="#A", player_name="Alpha", attacks=5, attack_limit=6, bonus_attacks=1, capital_resources_looted=700, clan_capital_contributions_snapshot=0)
+    crossing = weekend(
+        "crossing",
+        datetime(2026, 5, 20, tzinfo=UTC),
+        datetime(2026, 5, 23, tzinfo=UTC),
     )
-    session.add_all([
-        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 3, 0, tzinfo=UTC), value=10),
-        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 5, 0, tzinfo=UTC), value=20),
-    ])
-    await session.commit()
-
-    text = await CapitalRaidReportService(session, app_yaml_config).build_recent_weekends_report(3)
-    assert "⚠️ Рейды без данных:" in text
-    assert "- 2026-05-08 — 2026-05-10" in text
-    assert "- 2026-05-15 — 2026-05-17" in text
-
-
-@pytest.mark.asyncio
-async def test_build_recent_weekends_report_returns_message_when_all_selected_weekends_empty(session, app_yaml_config):
-    session.add_all([_weekend("s1", 1, 3), _weekend("s2", 8, 10), _weekend("s3", 15, 17)])
-    await session.commit()
-
-    text = await CapitalRaidReportService(session, app_yaml_config).build_recent_weekends_report(3)
-    assert text == "⚠️ По выбранным рейдам в базе нет данных участников клановой столицы."
-
-
-@pytest.mark.asyncio
-async def test_build_recent_weekends_report_all_selected_weekends_have_participants(session, app_yaml_config):
-    w1, w2, w3 = _weekend("s1", 1, 3), _weekend("s2", 8, 10), _weekend("s3", 15, 17)
-    session.add_all([w1, w2, w3])
+    session.add_all([previous, crossing])
     await session.flush()
-    session.add_all([
-        CapitalRaidParticipant(weekend_id=w1.id, player_id=None, player_tag="#A", player_name="Alpha", attacks=1, attack_limit=6, bonus_attacks=0, capital_resources_looted=100, clan_capital_contributions_snapshot=0),
-        CapitalRaidParticipant(weekend_id=w2.id, player_id=None, player_tag="#A", player_name="Alpha", attacks=2, attack_limit=6, bonus_attacks=1, capital_resources_looted=200, clan_capital_contributions_snapshot=0),
-        CapitalRaidParticipant(weekend_id=w3.id, player_id=None, player_tag="#A", player_name="Alpha", attacks=3, attack_limit=6, bonus_attacks=1, capital_resources_looted=300, clan_capital_contributions_snapshot=0),
-    ])
-    session.add_all([
-        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 3, 0, tzinfo=UTC), value=100),
-        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 20, 0, tzinfo=UTC), value=160),
-    ])
-    await session.commit()
-
-    text = await CapitalRaidReportService(session, app_yaml_config).build_recent_weekends_report(3)
-    assert "✅ Рейдов с данными участников: 3" in text
-    assert "⚠️ Пустых рейдов без данных участников: 0" in text
-
-
-@pytest.mark.asyncio
-async def test_build_recent_weekends_report_aggregates_only_existing_participants(session, app_yaml_config):
-    w1, w2, w3 = _weekend("s1", 1, 3), _weekend("s2", 8, 10), _weekend("s3", 15, 17)
-    session.add_all([w1, w2, w3])
-    await session.flush()
-    session.add(
-        CapitalRaidParticipant(weekend_id=w2.id, player_id=None, player_tag="#A", player_name="Alpha", attacks=6, attack_limit=6, bonus_attacks=1, capital_resources_looted=1111, clan_capital_contributions_snapshot=0)
+    session.add_all(
+        [
+            CapitalRaidParticipant(
+                weekend_id=previous.id, player_tag="#P1", player_name="Player", attacks=6,
+                attack_limit=6, bonus_attacks=1, districts_destroyed=9,
+                total_destruction_percent=900, capital_resources_looted=999999,
+            ),
+            CapitalRaidParticipant(
+                weekend_id=crossing.id, player_tag="#P1", player_name="Player", attacks=5,
+                attack_limit=6, bonus_attacks=0, districts_destroyed=2,
+                total_destruction_percent=362, capital_resources_looted=1,
+            ),
+            CapitalRaidViolation(
+                weekend_id=crossing.id, player_tag="#P1", player_name="Player",
+                code="capital_under_5_attacks", reason_text="reason", attacks=4,
+                detected_at=crossing.end_time,
+            ),
+        ]
     )
-    session.add_all([
-        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 10, 0, tzinfo=UTC), value=5),
-        PlayerCapitalContributionSnapshot(player_tag="#A", clan_tag="#CLAN", observed_at=datetime(2026, 5, 11, 0, tzinfo=UTC), value=25),
-    ])
     await session.commit()
 
-    text = await CapitalRaidReportService(session, app_yaml_config).build_recent_weekends_report(3)
-    assert "Alpha — атак: 6, бонусных: 1, налутал: 1111, вложил: 20" in text
+    service = CapitalRaidStatsService(session, app_yaml_config)
+    rows, stats = await service.build_current_cycle_stats(period)
+
+    assert stats.completed_weekends == 1
+    assert rows == [
+        {
+            "player_tag": "#P1",
+            "player_name": "Player",
+            "weekends_count": 1,
+            "attacks": 5,
+            "bonus_attacks": 0,
+            "districts_destroyed": 2,
+            "total_destruction_percent": 362,
+            "capital_violation_count": 1,
+        }
+    ]
+    text = service.format_current_cycle_stats(period, rows, stats)
+    assert "🏰 Столица" in text
+    assert "📦 Учтено рейдов столицы: 1" in text
+    assert "разрушение: 362%" in text
+
+
+@pytest.mark.asyncio
+async def test_current_cycle_stats_empty_message(session, app_yaml_config):
+    period = SimpleNamespace(
+        start=datetime(2026, 5, 21, tzinfo=UTC),
+        end=datetime(2026, 6, 21, tzinfo=UTC),
+    )
+    service = CapitalRaidStatsService(session, app_yaml_config)
+    rows, stats = await service.build_current_cycle_stats(period)
+    assert service.format_current_cycle_stats(period, rows, stats) == "⚠️ По столице за текущий цикл пока нет данных."
