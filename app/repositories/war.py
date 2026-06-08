@@ -64,6 +64,14 @@ class WarRepository:
         await self.session.flush()
         return attack
 
+    async def list_attacks_for_war(self, war_id: int) -> list[Attack]:
+        result = await self.session.scalars(
+            select(Attack)
+            .where(Attack.war_id == war_id)
+            .order_by(Attack.observed_at.asc(), Attack.id.asc())
+        )
+        return list(result.all())
+
     async def get_attack_by_id(self, attack_id: int) -> Attack | None:
         result = await self.session.execute(select(Attack).where(Attack.id == attack_id))
         return result.scalar_one_or_none()

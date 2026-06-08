@@ -191,11 +191,22 @@ class WarSyncService:
                 await self.wars.delete_violation(violation)
             return
 
+        allied_attacks = await self.wars.list_attacks_for_war(war.id)
         decision = evaluate_attack_violation(
             war_start_time=war.start_time,
             attack_seen_at=attack.observed_at,
             attacker_position=attack.attacker_position,
             defender_position=attack.defender_position,
+            defender_positions=range(
+                1,
+                max(
+                    war.team_size,
+                    attack.attacker_position + 3,
+                    attack.defender_position,
+                )
+                + 1,
+            ),
+            allied_attacks=allied_attacks,
         )
         if violation is not None and violation.is_manual is True:
             return

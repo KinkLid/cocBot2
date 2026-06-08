@@ -112,7 +112,7 @@ async def test_violation_in_first_12_hours_is_recorded(session, fake_clash_clien
 
     violation = await session.scalar(select(Violation))
     assert violation is not None
-    assert "выше своей позиции" in violation.reason_text
+    assert "выше разрешенной позиции" in violation.reason_text
 
 
 @pytest.mark.asyncio
