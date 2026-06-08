@@ -8,8 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import AppYamlConfig
 from app.models.enums import WarType
+from app.repositories.capital_raid import CapitalRaidRepository
+from app.repositories.capital_raid_violation import CapitalRaidViolationRepository
 from app.repositories.stats import StatsRepository
-from app.schemas.dto import AttackExportDTO, PlayerExportDTO, WarParticipationExportDTO
+from app.schemas.dto import AttackExportDTO, CapitalParticipationExportDTO, PlayerExportDTO, WarParticipationExportDTO
+from app.services.capital_raid_contribution import (
+    CAPITAL_UNDER_5_ATTACKS,
+    CAPITAL_UNDER_5_ATTACKS_REASON,
+    calculate_capital_weekend_score,
+)
 from app.services.stats import StatsService
 
 
@@ -19,12 +26,23 @@ class ExportService:
         self.config = config
         self.stats_repo = StatsRepository(session)
         self.stats_service = StatsService(session, config)
+        self.capital_repo = CapitalRaidRepository(session)
+        self.capital_violation_repo = CapitalRaidViolationRepository(session)
 
     async def export_to_dict(self, period_start, period_end) -> dict:
         clan_stats = await self.stats_service.clan_stats(period_start, period_end)
         player_tags = [row.player_tag for row in clan_stats.rows]
         attacks_rows = await self.stats_repo.attack_rows_for_players(self.config.main_clan_tag, period_start, period_end, player_tags)
         participation_rows = await self.stats_repo.participation_rows_for_players(self.config.main_clan_tag, period_start, period_end, player_tags)
+        capital_weekends = await self.capital_repo.list_weekends_for_period(
+            self.config.main_clan_tag, period_start, period_end
+        )
+        capital_participants = await self.capital_repo.list_participants_for_weekend_ids(
+            [weekend.id for weekend in capital_weekends]
+        )
+        capital_violations = await self.capital_violation_repo.list_for_weekend_ids(
+            [weekend.id for weekend in capital_weekends]
+        )
 
         attacks_by_player_and_war: dict[tuple[str, int], list[AttackExportDTO]] = defaultdict(list)
         for attack, war, violation in attacks_rows:
@@ -62,6 +80,43 @@ class ExportService:
                 )
             )
 
+        weekends_by_id = {weekend.id: weekend for weekend in capital_weekends}
+        violations_by_weekend_player = {
+            (violation.weekend_id, violation.player_tag): violation
+            for violation in capital_violations
+        }
+        capital_by_player: dict[str, list[CapitalParticipationExportDTO]] = defaultdict(list)
+        for participant in capital_participants:
+            weekend = weekends_by_id[participant.weekend_id]
+            violation = violations_by_weekend_player.get((participant.weekend_id, participant.player_tag))
+            assert weekend.end_time is not None
+            violated = participant.attacks < 5
+            capital_by_player[participant.player_tag].append(
+                CapitalParticipationExportDTO(
+                    raid_season_id=weekend.raid_season_id,
+                    start_time=weekend.start_time,
+                    end_time=weekend.end_time,
+                    attacks=participant.attacks,
+                    attack_limit=participant.attack_limit,
+                    bonus_attacks=participant.bonus_attacks,
+                    districts_destroyed=participant.districts_destroyed,
+                    total_destruction_percent=participant.total_destruction_percent,
+                    capital_resources_looted=participant.capital_resources_looted,
+                    violated=violated,
+                    violation_code=(violation.code if violation else CAPITAL_UNDER_5_ATTACKS if violated else None),
+                    violation_reason=(
+                        violation.reason_text
+                        if violation
+                        else CAPITAL_UNDER_5_ATTACKS_REASON if violated else None
+                    ),
+                    dev_capital_score=calculate_capital_weekend_score(
+                        attacks=participant.attacks,
+                        districts_destroyed=participant.districts_destroyed,
+                        total_destruction_percent=participant.total_destruction_percent,
+                    ),
+                )
+            )
+
         players_payload = []
         for row in clan_stats.rows:
             player = PlayerExportDTO(
@@ -77,6 +132,7 @@ class ExportService:
                 violations=row.violations,
                 place=row.place,
                 participation=participation_by_player.get(row.player_tag, []),
+                capital_participation=capital_by_player.get(row.player_tag, []),
             )
             players_payload.append(player.model_dump(mode="json"))
 

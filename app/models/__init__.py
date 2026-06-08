@@ -3,6 +3,7 @@ from app.models.attack import Attack
 from app.models.clan_membership_history import ClanMembershipHistory
 from app.models.clan_settings import ClanSettings
 from app.models.capital_raid import CapitalRaidParticipant, CapitalRaidWeekend
+from app.models.capital_raid_violation import CapitalRaidViolation
 from app.models.cycle_boundary import CycleBoundary
 from app.models.departed_player_archive import DepartedPlayerArchive
 from app.models.enums import PeriodKind, ViolationCode, WarState, WarType
@@ -22,6 +23,7 @@ __all__ = [
     "ClanSettings",
     "CapitalRaidParticipant",
     "CapitalRaidWeekend",
+    "CapitalRaidViolation",
     "CycleBoundary",
     "DepartedPlayerArchive",
     "PeriodKind",

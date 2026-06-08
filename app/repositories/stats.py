@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Attack, PlayerAccount, TelegramPlayerLink, TelegramUser, Violation, War, WarParticipant
-from app.models.enums import WarType
+from app.models import Attack, CapitalRaidViolation, CapitalRaidWeekend, PlayerAccount, TelegramPlayerLink, TelegramUser, Violation, War, WarParticipant
 
 
 @dataclass(slots=True)
@@ -81,6 +79,21 @@ class StatsRepository:
             .subquery()
         )
 
+        capital_violations_subq = (
+            select(
+                CapitalRaidViolation.player_tag.label("player_tag"),
+                func.count(CapitalRaidViolation.id).label("violations"),
+            )
+            .join(CapitalRaidWeekend, CapitalRaidWeekend.id == CapitalRaidViolation.weekend_id)
+            .where(
+                CapitalRaidWeekend.clan_tag == clan_tag,
+                CapitalRaidWeekend.end_time >= period_start,
+                CapitalRaidWeekend.end_time <= period_end,
+            )
+            .group_by(CapitalRaidViolation.player_tag)
+            .subquery()
+        )
+
         stmt = (
             select(
                 PlayerAccount.id,
@@ -94,11 +107,12 @@ class StatsRepository:
                 func.coalesce(wars_subq.c.wars, 0),
                 func.coalesce(attacks_subq.c.attacks, 0),
                 func.coalesce(attacks_subq.c.stars, 0),
-                func.coalesce(violations_subq.c.violations, 0),
+                func.coalesce(violations_subq.c.violations, 0) + func.coalesce(capital_violations_subq.c.violations, 0),
             )
             .outerjoin(attacks_subq, attacks_subq.c.player_tag == PlayerAccount.player_tag)
             .outerjoin(wars_subq, wars_subq.c.player_tag == PlayerAccount.player_tag)
             .outerjoin(violations_subq, violations_subq.c.player_tag == PlayerAccount.player_tag)
+            .outerjoin(capital_violations_subq, capital_violations_subq.c.player_tag == PlayerAccount.player_tag)
             .outerjoin(TelegramPlayerLink, TelegramPlayerLink.player_tag == PlayerAccount.player_tag)
             .outerjoin(TelegramUser, TelegramUser.id == TelegramPlayerLink.telegram_user_id)
             .where(PlayerAccount.current_in_clan.is_(True), PlayerAccount.current_clan_tag == clan_tag)

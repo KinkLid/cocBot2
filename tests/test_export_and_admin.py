@@ -302,5 +302,6 @@ def test_dev_capital_button_visible_only_for_admin():
     user = main_menu(False, True)
     admin_texts = [b.text for row in admin.keyboard for b in row]
     user_texts = [b.text for row in user.keyboard for b in row]
-    assert "🧪 Dev-столица" in admin_texts
-    assert "🧪 Dev-столица" not in user_texts
+    assert "🧪 Dev вклад в столицу" in admin_texts
+    assert "🧪 Dev вклад в столицу" not in user_texts
+    assert "🧪 Dev-столица" not in admin_texts

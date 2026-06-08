@@ -128,6 +128,22 @@ class WarParticipationExportDTO(BaseModel):
     attacks: list[AttackExportDTO] = Field(default_factory=list)
 
 
+class CapitalParticipationExportDTO(BaseModel):
+    raid_season_id: str
+    start_time: datetime | None
+    end_time: datetime
+    attacks: int
+    attack_limit: int
+    bonus_attacks: int
+    districts_destroyed: int
+    total_destruction_percent: int
+    capital_resources_looted: int
+    violated: bool
+    violation_code: str | None
+    violation_reason: str | None
+    dev_capital_score: float
+
+
 class PlayerExportDTO(BaseModel):
     player_tag: str
     player_name: str
@@ -141,6 +157,7 @@ class PlayerExportDTO(BaseModel):
     violations: int
     place: int
     participation: list[WarParticipationExportDTO] = Field(default_factory=list)
+    capital_participation: list[CapitalParticipationExportDTO] = Field(default_factory=list)
 
 
 class CapitalRaidParticipantDTO(BaseModel):
@@ -155,6 +172,21 @@ class CapitalRaidParticipantDTO(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class CapitalRaidAttackDTO(BaseModel):
+    attacker_tag: str = Field(alias="attackerTag")
+    destruction_percent: int = Field(default=0, alias="destructionPercent")
+
+    model_config = {"populate_by_name": True}
+
+
+class CapitalRaidDistrictDTO(BaseModel):
+    attacks: list[CapitalRaidAttackDTO] = Field(default_factory=list)
+
+
+class CapitalRaidClanDTO(BaseModel):
+    districts: list[CapitalRaidDistrictDTO] = Field(default_factory=list)
+
+
 class CapitalRaidSeasonDTO(BaseModel):
     state: str
     start_time: str | None = Field(default=None, alias="startTime")
@@ -165,5 +197,14 @@ class CapitalRaidSeasonDTO(BaseModel):
     offensive_reward: int = Field(default=0, alias="offensiveReward")
     defensive_reward: int = Field(default=0, alias="defensiveReward")
     members: list[CapitalRaidParticipantDTO] = Field(default_factory=list)
+    attack_log: list[CapitalRaidClanDTO] = Field(default_factory=list, alias="attackLog")
 
     model_config = {"populate_by_name": True}
+
+    def destruction_by_player(self) -> dict[str, int]:
+        totals: dict[str, int] = {}
+        for clan in self.attack_log:
+            for district in clan.districts:
+                for attack in district.attacks:
+                    totals[attack.attacker_tag] = totals.get(attack.attacker_tag, 0) + attack.destruction_percent
+        return totals

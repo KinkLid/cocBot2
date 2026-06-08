@@ -18,6 +18,7 @@ class FakeClashApiClient(ClashApiClient):
         self.current_war: WarDTO | None = None
         self.cwl_group: CWLGroupDTO | None = None
         self.cwl_wars: dict[str, WarDTO] = {}
+        self.capital_raid_seasons = []
 
     async def verify_player_token(self, player_tag: str, token: str) -> bool:
         return self.verify_map.get((player_tag, token), False)
@@ -39,6 +40,9 @@ class FakeClashApiClient(ClashApiClient):
 
     async def get_cwl_war(self, war_tag: str, *, clan_tag: str, league_group_id: str, season: str, round_index: int) -> WarDTO:
         return self.cwl_wars[war_tag]
+
+    async def get_capital_raid_seasons(self, clan_tag: str, limit: int = 10):
+        return self.capital_raid_seasons[:limit]
 
 
 @dataclass

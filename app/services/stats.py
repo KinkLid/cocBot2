@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import AppYamlConfig
 from app.models.enums import WarType
+from app.repositories.capital_raid_violation import CapitalRaidViolationRepository
 from app.repositories.stats import StatsRepository
 from app.repositories.war import WarRepository
 from app.schemas.dto import PlayerStatsDTO
@@ -27,6 +29,7 @@ class StatsService:
         self.config = config
         self.repo = StatsRepository(session)
         self.war_repo = WarRepository(session)
+        self.capital_violation_repo = CapitalRaidViolationRepository(session)
 
     async def player_stats(self, period_start, period_end, player_tag: str) -> PlayerStatsDTO:
         rows = await self.repo.aggregated_player_stats(
@@ -146,13 +149,19 @@ class StatsService:
             period_start=period_start,
             period_end=period_end,
         )
-        ranked = [row for row in rows if row[3] > 0]
+        capital_counts = await self.capital_violation_repo.aggregated_current_cycle(
+            self.config.main_clan_tag, period_start, period_end
+        )
+        combined = [
+            (player_tag, player_name, clan_rank, violations + capital_counts.get(player_tag, 0))
+            for player_tag, player_name, clan_rank, violations in rows
+        ]
+        ranked = sorted(
+            (row for row in combined if row[3] > 0),
+            key=lambda row: (-row[3], row[2] or 10_000, row[1]),
+        )
         return [
-            {
-                "player_tag": player_tag,
-                "player_name": player_name,
-                "violations": violations,
-            }
+            {"player_tag": player_tag, "player_name": player_name, "violations": violations}
             for player_tag, player_name, _, violations in ranked
         ]
 
@@ -165,23 +174,50 @@ class StatsService:
         return "\n".join(lines)
 
     async def build_player_violations_report(self, period_start, period_end, player_tag: str, player_name: str) -> str:
-        rows = await self.war_repo.list_player_violations_in_period(
+        war_rows = await self.war_repo.list_player_violations_in_period(
             clan_tag=self.config.main_clan_tag,
             player_tag=player_tag,
             period_start=period_start,
             period_end=period_end,
         )
-        if not rows:
+        capital_rows = await self.capital_violation_repo.list_for_player_in_period(
+            player_tag, period_start, period_end
+        )
+        entries: list[tuple[datetime, list[str]]] = []
+        for violation, attack, war in war_rows:
+            war_type = "ЛВК" if war.war_type == WarType.CWL else "КВ"
+            entries.append(
+                (
+                    violation.detected_at,
+                    [
+                        f"{violation.detected_at:%Y-%m-%d %H:%M} | {war_type} | "
+                        f"{attack.attacker_position} -> {attack.defender_position}",
+                        f"Код: {violation.code.value}",
+                        f"Причина: {violation.reason_text}",
+                    ],
+                )
+            )
+        for violation, weekend in capital_rows:
+            assert weekend.end_time is not None
+            entries.append(
+                (
+                    weekend.end_time,
+                    [
+                        f"{weekend.end_time:%Y-%m-%d %H:%M} | Столица",
+                        f"Код: {violation.code}",
+                        f"Причина: {violation.reason_text}",
+                        f"Атак в рейде: {violation.attacks}",
+                    ],
+                )
+            )
+        entries.sort(key=lambda entry: entry[0])
+        if not entries:
             return f"✅ У игрока {player_name} нет нарушений за текущий цикл."
 
         lines = [f"🚨 Нарушения игрока: {player_name}", ""]
-        for idx, (violation, attack, war) in enumerate(rows, 1):
-            war_type = "ЛВК" if war.war_type == WarType.CWL else "КВ"
-            lines.append(
-                f"{idx}. {violation.detected_at:%Y-%m-%d %H:%M} | {war_type} | {attack.attacker_position} -> {attack.defender_position}"
-            )
-            lines.append(f"Код: {violation.code.value}")
-            lines.append(f"Причина: {violation.reason_text}")
-            if idx < len(rows):
+        for idx, (_, detail_lines) in enumerate(entries, 1):
+            lines.append(f"{idx}. {detail_lines[0]}")
+            lines.extend(detail_lines[1:])
+            if idx < len(entries):
                 lines.append("")
         return "\n".join(lines)

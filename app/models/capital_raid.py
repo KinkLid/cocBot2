@@ -26,6 +26,7 @@ class CapitalRaidWeekend(Base):
     processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
     participants = relationship("CapitalRaidParticipant", back_populates="weekend", cascade="all, delete-orphan")
+    violations = relationship("CapitalRaidViolation", back_populates="weekend", cascade="all, delete-orphan")
 
 
 class CapitalRaidParticipant(Base):
@@ -42,6 +43,7 @@ class CapitalRaidParticipant(Base):
     bonus_attacks: Mapped[int] = mapped_column(Integer, default=0)
     capital_resources_looted: Mapped[int] = mapped_column(Integer, default=0)
     districts_destroyed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_destruction_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     clan_capital_contributions_snapshot: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     weekend = relationship("CapitalRaidWeekend", back_populates="participants")
