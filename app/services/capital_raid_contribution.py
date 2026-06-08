@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime
 from math import floor
 
 from app.config.settings import AppYamlConfig
 from app.repositories.capital_raid import CapitalRaidRepository
+from app.repositories.player_account import PlayerAccountRepository
 
 
 CAPITAL_UNDER_5_ATTACKS = "capital_under_5_attacks"
@@ -30,11 +32,15 @@ class CapitalContributionCycleStats:
     total_completed_weekends: int
     weekends_with_participants: int
     weekends_without_participants: int
+    last_weekend_end_time: datetime | None
+    inactive_last_weekend_count: int
+    inactive_last_weekend_players: list[str]
 
 
 class CapitalRaidContributionService:
     def __init__(self, session, config: AppYamlConfig) -> None:
         self.repo = CapitalRaidRepository(session)
+        self.player_repo = PlayerAccountRepository(session)
         self.config = config
 
     async def build_current_cycle_ranking(self, period):
@@ -44,6 +50,18 @@ class CapitalRaidContributionService:
         total_completed_weekends = len(weekends)
         weekend_ids = {weekend.id for weekend in weekends}
         participants = await self.repo.list_participants_for_weekend_ids(list(weekend_ids))
+        last_weekend = max(weekends, key=lambda weekend: weekend.end_time) if weekends else None
+        inactive_last_weekend_players: list[str] = []
+        if last_weekend is not None:
+            active_player_tags = {
+                participant.player_tag
+                for participant in participants
+                if participant.weekend_id == last_weekend.id and participant.attacks > 0
+            }
+            current_clan_members = await self.player_repo.active_clan_members(self.config.main_clan_tag)
+            inactive_last_weekend_players = [
+                player.name for player in current_clan_members if player.player_tag not in active_player_tags
+            ]
         weekends_with_participants = len(
             {participant.weekend_id for participant in participants if participant.weekend_id in weekend_ids}
         )
@@ -89,13 +107,14 @@ class CapitalRaidContributionService:
             total_completed_weekends=total_completed_weekends,
             weekends_with_participants=weekends_with_participants,
             weekends_without_participants=weekends_without_participants,
+            last_weekend_end_time=last_weekend.end_time if last_weekend is not None else None,
+            inactive_last_weekend_count=len(inactive_last_weekend_players),
+            inactive_last_weekend_players=inactive_last_weekend_players,
         )
 
     def format_current_cycle_ranking(self, period, ranking, stats: CapitalContributionCycleStats) -> str:
         if stats.total_completed_weekends == 0:
             return "⚠️ По клановой столице за текущий цикл пока нет данных."
-        if stats.weekends_with_participants == 0:
-            return "⚠️ В текущем цикле есть завершенные рейды столицы, но по ним нет данных участников."
         lines = [
             "🧪 Dev вклад в столицу",
             f"📅 {period.start.date().isoformat()} — {period.end.date().isoformat()}",
@@ -104,6 +123,7 @@ class CapitalRaidContributionService:
         ]
         if stats.weekends_without_participants > 0:
             lines.append(f"⚠️ Рейдов без данных участников: {stats.weekends_without_participants}")
+        lines.append(f"🚫 Не атаковали в последнем рейде: {stats.inactive_last_weekend_count}")
         lines.append("")
         for index, row in enumerate(ranking, 1):
             lines.append(
@@ -111,5 +131,11 @@ class CapitalRaidContributionService:
                 f"рейдов: {row['weekends_count']}, атак: {row['attacks']}, "
                 f"добиваний: {row['districts_destroyed']}, "
                 f"разрушение: {row['total_destruction_percent']}%, нарушений: {row['violations']}"
+            )
+        if stats.inactive_last_weekend_players:
+            lines.extend(["", "Не атаковали в последнем рейде:"])
+            lines.extend(
+                f"{index}. {player_name}"
+                for index, player_name in enumerate(stats.inactive_last_weekend_players, 1)
             )
         return "\n".join(lines)
