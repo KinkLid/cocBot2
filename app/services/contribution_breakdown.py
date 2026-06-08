@@ -82,7 +82,7 @@ class ContributionBreakdownService:
                 kind="donations",
                 title="Донаты войск за цикл",
                 occurred_at=None,
-                score_delta=component.score_delta,
+                score_delta=round(component.score_delta, 2),
                 details=f"Сырой донат: {donation_total}",
             )
         if component.kind == "unused_attack_penalty":

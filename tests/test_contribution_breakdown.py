@@ -125,6 +125,10 @@ def test_detailed_breakdown_has_regular_cwl_penalty_donation_and_violation(monke
     assert "Штраф за неиспользованную атаку | КВ" in text
     assert "Донаты войск за цикл | Сырой донат: 380" in text
     assert "+3.80" in text
+    donation_item = next(item for item in breakdown.items if item.kind == "donations")
+    assert donation_item.title == "Донаты войск за цикл"
+    assert donation_item.score_delta == 3.8
+    assert donation_item.details == "Сырой донат: 380"
 
 
 def test_breakdown_final_score_matches_dev_contribution_ranking(monkeypatch):
@@ -144,7 +148,7 @@ def test_breakdown_final_score_matches_dev_contribution_ranking(monkeypatch):
 
 @pytest.mark.parametrize(
     ("raw_donations", "donation_points"),
-    [(0, 0.0), (1, 0.01), (10, 0.1), (100, 1.0), (380, 3.8)],
+    [(0, 0.0), (1, 0.01), (10, 0.1), (100, 1.0), (380, 3.8), (1000, 10.0)],
 )
 def test_donation_only_breakdown_uses_weighted_points(
     monkeypatch, raw_donations, donation_points

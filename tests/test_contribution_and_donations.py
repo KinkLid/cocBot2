@@ -169,7 +169,7 @@ def _mock_cycle(monkeypatch):
 
 @pytest.mark.parametrize(
     ("raw_donations", "donation_points"),
-    [(0, 0.0), (1, 0.01), (10, 0.1), (100, 1.0), (380, 3.8)],
+    [(0, 0.0), (1, 0.01), (10, 0.1), (100, 1.0), (380, 3.8), (1000, 10.0)],
 )
 def test_contribution_ranking_adds_weighted_donations_to_base_score(
     app_yaml_config, monkeypatch, raw_donations, donation_points

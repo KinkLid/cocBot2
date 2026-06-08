@@ -25,6 +25,13 @@ from app.services.donations import DonationService
 from app.utils.time import utcnow
 
 
+DONATION_POINTS_PER_UNIT = 0.01
+
+
+def _calculate_donation_points(raw_donations: int) -> float:
+    return round(raw_donations * DONATION_POINTS_PER_UNIT, 2)
+
+
 def _normalize_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=UTC)
@@ -268,7 +275,7 @@ class DevContributionService:
                 row.player_tag, period.start, period.end
             )
             donations_by_tag[row.player_tag] = donations
-            donation_points = round(donations * 0.01, 2)
+            donation_points = _calculate_donation_points(donations)
             components_by_tag[row.player_tag].append(
                 ContributionScoreComponent(
                     kind="donations",
@@ -298,8 +305,8 @@ class DevContributionService:
                     newcomer=newcomer,
                     active_violations=calculation.active_violations_by_tag.get(row.player_tag, 0),
                     donations=calculation.donations_by_tag.get(row.player_tag, 0),
-                    donation_points=round(
-                        calculation.donations_by_tag.get(row.player_tag, 0) * 0.01, 2
+                    donation_points=_calculate_donation_points(
+                        calculation.donations_by_tag.get(row.player_tag, 0)
                     ),
                 )
             )
