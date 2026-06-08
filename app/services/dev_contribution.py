@@ -21,6 +21,7 @@ from app.models import ClanMembershipHistory
 from app.domain.violation_rules import evaluate_attack_violation
 from app.repositories.stats import StatsRepository
 from app.services.active_violation_counter import ActiveViolationCounterService
+from app.services.donations import DonationService
 from app.utils.time import utcnow
 
 
@@ -44,6 +45,7 @@ class ContributionRankingRow:
     score: float
     newcomer: bool
     active_violations: int = 0
+    donations: int = 0
 
 
 class ContributionDataUnavailableError(Exception):
@@ -106,6 +108,7 @@ class DevContributionService:
         stats_rows = await self.repo.aggregated_player_stats(clan_tag=self.config.main_clan_tag, period_start=period.start, period_end=period.end)
         if not stats_rows:
             raise ContributionDataUnavailableError("⚠️ Общий вклад пока нельзя посчитать: в текущем цикле еще нет игроков в основном клане.")
+        donation_service = DonationService(self.session, self.config)
         attacks_rows = await self.repo.attack_rows_for_players(self.config.main_clan_tag, period.start, period.end, [r.player_tag for r in stats_rows])
         if not attacks_rows:
             raise ContributionDataUnavailableError("⚠️ Общий вклад пока пуст: в текущем цикле еще никто не сделал атак.")
@@ -200,14 +203,18 @@ class DevContributionService:
         ranking: list[ContributionRankingRow] = []
         for row in stats_rows:
             newcomer = await self.is_newcomer(row.player_id) if hasattr(row, "player_id") else False
+            donations_score = await donation_service.calculate_player_donations_for_period(
+                row.player_tag, period.start, period.end
+            )
             ranking.append(
                 ContributionRankingRow(
-                    row.player_tag,
-                    row.player_name,
-                    row.wars,
-                    round(by_tag.get(row.player_tag, 0.0), 2),
-                    newcomer,
-                    active_counts.get(row.player_tag, 0),
+                    player_tag=row.player_tag,
+                    player_name=row.player_name,
+                    wars=row.wars,
+                    score=round(by_tag.get(row.player_tag, 0.0) + donations_score, 2),
+                    newcomer=newcomer,
+                    active_violations=active_counts.get(row.player_tag, 0),
+                    donations=donations_score,
                 )
             )
         return sorted(ranking, key=lambda x: (-x.score, x.player_name.casefold(), x.player_tag))
@@ -220,6 +227,6 @@ class DevContributionService:
             violation_suffix = " ❌" if row.active_violations >= 3 else ""
             newcomer_suffix = " 🆕 новенький" if row.newcomer else ""
             lines.append(
-                f"{idx}. {row.player_name} — {row.score:.2f}{violation_suffix}{newcomer_suffix}"
+                f"{idx}. {row.player_name} — {row.score:.2f} | донат: {row.donations}{violation_suffix}{newcomer_suffix}"
             )
         return "\n".join(lines)
