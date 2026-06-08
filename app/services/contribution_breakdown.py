@@ -29,6 +29,7 @@ class PlayerContributionBreakdown:
     attack_score_total: float
     unused_attack_penalty_total: float
     donation_total: int
+    donation_score_total: float
     final_score: float
     active_violations: int
     items: list[ContributionBreakdownItem]
@@ -45,12 +46,15 @@ class ContributionBreakdownService:
         stats_row = next((row for row in calculation.stats_rows if row.player_tag == player_tag), None)
         player_name = stats_row.player_name if stats_row is not None else player_tag
         components = calculation.components_by_tag.get(player_tag, [])
-        items = [self._build_item(component) for component in components]
+        donation_total = calculation.donations_by_tag.get(player_tag, 0)
+        items = [self._build_item(component, donation_total) for component in components]
         attack_total = sum(item.score_delta for item in items if item.kind == "attack")
         penalty_total = sum(
             item.score_delta for item in items if item.kind == "unused_attack_penalty"
         )
-        donation_total = calculation.donations_by_tag.get(player_tag, 0)
+        donation_score_total = sum(
+            item.score_delta for item in items if item.kind == "donations"
+        )
         final_score = round(sum(item.score_delta for item in items), 2)
         return PlayerContributionBreakdown(
             player_tag=player_tag,
@@ -60,6 +64,7 @@ class ContributionBreakdownService:
             attack_score_total=round(attack_total, 2),
             unused_attack_penalty_total=round(penalty_total, 2),
             donation_total=donation_total,
+            donation_score_total=round(donation_score_total, 2),
             final_score=final_score,
             active_violations=calculation.active_violations_by_tag.get(player_tag, 0),
             items=items,
@@ -69,13 +74,16 @@ class ContributionBreakdownService:
     def _war_label(war: Any) -> str:
         return "ЛВК" if war.war_type == WarType.CWL else "КВ"
 
-    def _build_item(self, component: ContributionScoreComponent) -> ContributionBreakdownItem:
+    def _build_item(
+        self, component: ContributionScoreComponent, donation_total: int
+    ) -> ContributionBreakdownItem:
         if component.kind == "donations":
             return ContributionBreakdownItem(
                 kind="donations",
                 title="Донаты войск за цикл",
                 occurred_at=None,
                 score_delta=component.score_delta,
+                details=f"Сырой донат: {donation_total}",
             )
         if component.kind == "unused_attack_penalty":
             war_date = component.war.end_time.strftime("%Y-%m-%d")
@@ -112,7 +120,8 @@ class ContributionBreakdownService:
                 "",
                 f"Атаки: {breakdown.attack_score_total:+.2f}",
                 f"Неиспользованные атаки: {breakdown.unused_attack_penalty_total:+.2f}",
-                f"Донаты: {breakdown.donation_total:+d}",
+                f"Донаты: {breakdown.donation_score_total:+.2f} "
+                f"(сырой донат: {breakdown.donation_total})",
                 f"Активные нарушения: {breakdown.active_violations}",
                 "",
                 f"Итого: {breakdown.final_score:.2f}",

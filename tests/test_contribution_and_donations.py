@@ -122,17 +122,31 @@ def test_contribution_ranking_formats_donations_violations_and_newcomer():
     text = service.format_contribution_ranking(
         [
             ContributionRankingRow(
-                "#P1", "Both", 1, 160.45, True, active_violations=3, donations=37
+                "#P1",
+                "Both",
+                1,
+                160.45,
+                True,
+                active_violations=3,
+                donations=380,
+                donation_points=3.8,
             ),
             ContributionRankingRow(
-                "#P2", "No Mark", 1, 100.0, False, active_violations=2, donations=0
+                "#P2",
+                "No Mark",
+                1,
+                100.0,
+                False,
+                active_violations=2,
+                donations=0,
+                donation_points=0.0,
             ),
         ]
     )
 
-    assert "1. Both — 160.45 | донат: 37 ❌ 🆕 новенький" in text
-    assert "2. No Mark — 100.00 | донат: 0" in text
-    assert "No Mark — 100.00 | донат: 0 ❌" not in text
+    assert "1. Both — 160.45 | донат: 380 (+3.80) ❌ 🆕 новенький" in text
+    assert "2. No Mark — 100.00 | донат: 0 (+0.00)" in text
+    assert "No Mark — 100.00 | донат: 0 (+0.00) ❌" not in text
 
 
 def _build_test_app_context(app_yaml_config):
@@ -153,7 +167,13 @@ def _mock_cycle(monkeypatch):
     monkeypatch.setattr("app.bot.handlers.admin.PeriodService.current_cycle", AsyncMock(return_value=SimpleNamespace(start=datetime.now(UTC)-timedelta(days=1), end=datetime.now(UTC))))
 
 
-def test_contribution_ranking_adds_donations_to_base_score(app_yaml_config, monkeypatch):
+@pytest.mark.parametrize(
+    ("raw_donations", "donation_points"),
+    [(0, 0.0), (1, 0.01), (10, 0.1), (100, 1.0), (380, 3.8)],
+)
+def test_contribution_ranking_adds_weighted_donations_to_base_score(
+    app_yaml_config, monkeypatch, raw_donations, donation_points
+):
     period = SimpleNamespace(start=NOW - timedelta(days=1), end=NOW)
     player = SimpleNamespace(player_tag="#P1", player_name="P1", wars=1, player_id=1)
     war = SimpleNamespace(
@@ -187,13 +207,14 @@ def test_contribution_ranking_adds_donations_to_base_score(app_yaml_config, monk
     monkeypatch.setattr(contribution_module.StatsRepository, "enemy_participation_rows_for_wars", AsyncMock(return_value=[]))
     monkeypatch.setattr(contribution_module, "calculate_attack_contribution", Mock(return_value=SimpleNamespace(score=100.0)))
     monkeypatch.setattr(DevContributionService, "is_newcomer", AsyncMock(return_value=False))
-    donation_mock = AsyncMock(return_value=37)
+    donation_mock = AsyncMock(return_value=raw_donations)
     monkeypatch.setattr(DonationService, "calculate_player_donations_for_period", donation_mock)
 
     ranking = asyncio.run(DevContributionService(object(), app_yaml_config).build_contribution_ranking(period))
 
-    assert ranking[0].score == 137.0
-    assert ranking[0].donations == 37
+    assert ranking[0].score == 100.0 + donation_points
+    assert ranking[0].donations == raw_donations
+    assert ranking[0].donation_points == donation_points
     donation_mock.assert_awaited_once_with("#P1", period.start, period.end)
 
 
@@ -238,7 +259,9 @@ def test_contribution_ranking_without_donation_snapshots_keeps_base_score(app_ya
     assert ranking[0].donations == 0
 
 
-def test_contribution_ranking_sorts_by_score_including_donations(app_yaml_config, monkeypatch):
+def test_contribution_ranking_sorts_by_score_including_weighted_donations(
+    app_yaml_config, monkeypatch
+):
     period = SimpleNamespace(start=NOW - timedelta(days=1), end=NOW)
     players = [
         SimpleNamespace(player_tag="#P1", player_name="Alpha", wars=1, player_id=1),
@@ -278,7 +301,12 @@ def test_contribution_ranking_sorts_by_score_including_donations(app_yaml_config
     monkeypatch.setattr(
         DonationService,
         "calculate_player_donations_for_period",
-        AsyncMock(side_effect=lambda player_tag, _start, _end: {"#P1": 0, "#P2": 20}[player_tag]),
+        AsyncMock(
+            side_effect=lambda player_tag, _start, _end: {
+                "#P1": 0,
+                "#P2": 2000,
+            }[player_tag]
+        ),
     )
 
     ranking = asyncio.run(DevContributionService(object(), app_yaml_config).build_contribution_ranking(period))
