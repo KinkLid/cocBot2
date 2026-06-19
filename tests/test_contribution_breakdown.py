@@ -146,6 +146,89 @@ def test_breakdown_final_score_matches_dev_contribution_ranking(monkeypatch):
     assert breakdown.final_score == ranking[0].score
 
 
+def test_breakdown_does_not_show_too_low_without_component_violation(monkeypatch):
+    regular_war = _war(3, WarType.REGULAR, NOW - timedelta(days=1))
+    calculation = ContributionCalculation(
+        stats_rows=[
+            SimpleNamespace(
+                player_tag="#DARK",
+                player_name="THE_DARK_KING",
+                wars=1,
+                player_id=1,
+            )
+        ],
+        components_by_tag={
+            "#DARK": [
+                ContributionScoreComponent(
+                    kind="attack",
+                    player_tag="#DARK",
+                    score_delta=48.0,
+                    attack=_attack(
+                        "#DARK",
+                        position=3,
+                        target=15,
+                        observed_at=NOW - timedelta(hours=1),
+                    ),
+                    war=regular_war,
+                    violation_code=None,
+                )
+            ]
+        },
+        active_violations_by_tag={"#DARK": 0},
+        donations_by_tag={"#DARK": 0},
+    )
+    service = _service(monkeypatch, calculation)
+
+    breakdown = asyncio.run(service.build_player_breakdown("#DARK", PERIOD))
+    text = service.format_detailed_breakdown(breakdown)
+
+    assert "КВ | 3 -> 15 | 3⭐ 100%" in text
+    assert "Нарушение: too_low" not in text
+    assert breakdown.attack_score_total == 48.0
+    assert breakdown.final_score == 48.0
+
+
+def test_breakdown_shows_saved_too_low_component_violation(monkeypatch):
+    regular_war = _war(4, WarType.REGULAR, NOW - timedelta(days=1))
+    calculation = ContributionCalculation(
+        stats_rows=[
+            SimpleNamespace(
+                player_tag="#DARK",
+                player_name="THE_DARK_KING",
+                wars=1,
+                player_id=1,
+            )
+        ],
+        components_by_tag={
+            "#DARK": [
+                ContributionScoreComponent(
+                    kind="attack",
+                    player_tag="#DARK",
+                    score_delta=-36.0,
+                    attack=_attack(
+                        "#DARK",
+                        position=3,
+                        target=18,
+                        observed_at=NOW - timedelta(hours=1),
+                    ),
+                    war=regular_war,
+                    violation_code=ViolationCode.TOO_LOW,
+                )
+            ]
+        },
+        active_violations_by_tag={"#DARK": 1},
+        donations_by_tag={"#DARK": 0},
+    )
+    service = _service(monkeypatch, calculation)
+
+    breakdown = asyncio.run(service.build_player_breakdown("#DARK", PERIOD))
+    text = service.format_detailed_breakdown(breakdown)
+
+    assert "КВ | 3 -> 18 | 3⭐ 100% | Нарушение: too_low" in text
+    assert breakdown.attack_score_total == -36.0
+    assert breakdown.final_score == -36.0
+
+
 @pytest.mark.parametrize(
     ("raw_donations", "donation_points"),
     [(0, 0.0), (1, 0.01), (10, 0.1), (100, 1.0), (380, 3.8), (1000, 10.0)],
