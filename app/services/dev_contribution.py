@@ -18,7 +18,6 @@ from app.domain.dev_contribution import (
 )
 from app.models.enums import ViolationCode, WarType
 from app.models import ClanMembershipHistory
-from app.domain.violation_rules import evaluate_attack_violation
 from app.repositories.stats import StatsRepository
 from app.services.active_violation_counter import ActiveViolationCounterService
 from app.services.donations import DonationService
@@ -190,15 +189,21 @@ class DevContributionService:
                 previous_attacks_by_target[target_key].append((attack.stars, attack.destruction))
                 continue
 
-            is_cwl = war.war_type.value == "cwl"
-            decision = None if is_cwl else evaluate_attack_violation(
-                war_start_time=war.start_time,
-                attack_seen_at=attack.observed_at,
-                attacker_position=attack.attacker_position,
-                defender_position=attack.defender_position,
+            is_cwl = war.war_type == WarType.CWL
+            automatic_violation_code = None
+            if not is_cwl and stored_violation is not None:
+                if stored_violation.code in {
+                    ViolationCode.ABOVE_SELF,
+                    ViolationCode.TOO_LOW,
+                }:
+                    automatic_violation_code = stored_violation.code
+
+            is_above_self_violation = (
+                automatic_violation_code == ViolationCode.ABOVE_SELF
             )
-            is_above_self_violation = bool(decision and decision.code == ViolationCode.ABOVE_SELF)
-            is_too_low_violation = bool(decision and decision.code == ViolationCode.TOO_LOW)
+            is_too_low_violation = (
+                automatic_violation_code == ViolationCode.TOO_LOW
+            )
             previous_attacks = previous_attacks_by_target[target_key]
             prev_best_stars, prev_best_destruction = _select_best_attack_result(previous_attacks)
             contribution = calculate_attack_contribution(
@@ -222,7 +227,7 @@ class DevContributionService:
                     score_delta=contribution.score,
                     attack=attack,
                     war=war,
-                    violation_code=decision.code if decision is not None else None,
+                    violation_code=automatic_violation_code,
                 )
             )
             previous_attacks_by_target[target_key].append((attack.stars, attack.destruction))

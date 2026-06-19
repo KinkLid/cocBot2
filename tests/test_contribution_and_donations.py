@@ -17,6 +17,7 @@ from app.domain.dev_contribution import (
     calculate_cwl_unused_attack_penalty,
     calculate_unused_attack_penalty,
 )
+from app.models.enums import ViolationCode, WarType
 from app.schemas.dto import PlayerProfileDTO
 from app.services import dev_contribution as contribution_module
 from app.services.contribution_breakdown import (
@@ -82,6 +83,124 @@ def test_too_low_still_applies_when_not_above_self():
 
 def test_cwl_still_ignores_positional_penalties():
     assert calculate_attack_contribution(ContributionAttackInput(stars=3, destruction=100, attacker_position=1, defender_position=20, is_cwl=True, is_too_low_violation=True, is_above_self_violation=True)).score == 65.0
+
+
+def _build_contribution_calculation_for_attack(
+    app_yaml_config,
+    monkeypatch,
+    *,
+    target: int,
+    stored_violation,
+    war_type: WarType = WarType.REGULAR,
+):
+    period = SimpleNamespace(start=NOW - timedelta(days=1), end=NOW)
+    player = SimpleNamespace(
+        player_tag="#DARK",
+        player_name="THE_DARK_KING",
+        wars=1,
+        player_id=1,
+    )
+    war = SimpleNamespace(
+        id=100 + target,
+        war_type=war_type,
+        start_time=NOW - timedelta(hours=2),
+        end_time=NOW - timedelta(minutes=1),
+    )
+    attack = SimpleNamespace(
+        attacker_tag="#DARK",
+        stars=3,
+        destruction=100,
+        attacker_position=3,
+        defender_position=target,
+        observed_at=NOW,
+    )
+    monkeypatch.setattr(
+        contribution_module.StatsRepository,
+        "aggregated_player_stats",
+        AsyncMock(return_value=[player]),
+    )
+    monkeypatch.setattr(
+        contribution_module.StatsRepository,
+        "attack_rows_for_players",
+        AsyncMock(return_value=[(attack, war, stored_violation)]),
+    )
+    monkeypatch.setattr(
+        contribution_module.StatsRepository,
+        "participation_rows_for_players",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        contribution_module.StatsRepository,
+        "enemy_participation_rows_for_wars",
+        AsyncMock(return_value=[]),
+    )
+
+    return asyncio.run(
+        DevContributionService(object(), app_yaml_config).build_contribution_calculation(period)
+    )
+
+
+@pytest.mark.parametrize("target", [15, 18])
+def test_contribution_uses_absent_stored_violation_as_allowed_attack(
+    app_yaml_config, monkeypatch, target
+):
+    calculation = _build_contribution_calculation_for_attack(
+        app_yaml_config,
+        monkeypatch,
+        target=target,
+        stored_violation=None,
+    )
+
+    component = next(
+        item
+        for item in calculation.components_by_tag["#DARK"]
+        if item.kind == "attack"
+    )
+
+    assert component.violation_code is None
+    assert component.score_delta == 48.0
+    assert calculation.score_for("#DARK") == 48.0
+
+
+def test_contribution_uses_saved_too_low_violation(app_yaml_config, monkeypatch):
+    calculation = _build_contribution_calculation_for_attack(
+        app_yaml_config,
+        monkeypatch,
+        target=18,
+        stored_violation=SimpleNamespace(code=ViolationCode.TOO_LOW),
+    )
+
+    component = next(
+        item
+        for item in calculation.components_by_tag["#DARK"]
+        if item.kind == "attack"
+    )
+
+    assert component.violation_code == ViolationCode.TOO_LOW
+    assert component.score_delta == -36.0
+    assert calculation.score_for("#DARK") == -36.0
+
+
+def test_contribution_ignores_saved_automatic_violation_for_cwl(
+    app_yaml_config, monkeypatch
+):
+    calculation = _build_contribution_calculation_for_attack(
+        app_yaml_config,
+        monkeypatch,
+        target=18,
+        stored_violation=SimpleNamespace(code=ViolationCode.TOO_LOW),
+        war_type=WarType.CWL,
+    )
+
+    component = next(
+        item
+        for item in calculation.components_by_tag["#DARK"]
+        if item.kind == "attack"
+    )
+
+    assert component.violation_code is None
+    assert component.score_delta == 65.0
+
 
 def test_unused_penalties():
     assert calculate_unused_attack_penalty(is_cwl=False, unused_attacks=1, attacker_position=1, opponent_positions=[1, 2, 3], attacked_defender_positions=[1, 2]) == -12
