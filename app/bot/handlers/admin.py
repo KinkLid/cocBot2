@@ -6,11 +6,18 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, FSInputFile, Message
 
-from app.bot.keyboards.common import admin_sort_keyboard
+from app.bot.keyboards.common import (
+    admin_menu_button_keyboard,
+    admin_sort_keyboard,
+    manual_contribution_cancel_keyboard,
+    manual_contribution_confirm_keyboard,
+    manual_contribution_players_keyboard,
+)
 from app.bot.keyboards.main import back_keyboard, main_menu
 from app.bot.utils.telegram_text import edit_or_send_long_message, send_long_message
 from app.bot.states.chat_link import ChatLinkStates
 from app.bot.states.contribution_breakdown import ContributionBreakdownStates
+from app.bot.states.manual_contribution import ManualContributionStates
 from app.bot.states.manual_violation import ManualViolationStates
 from app.bot.states.violations import ViolationStates
 from app.container import AppContext
@@ -27,6 +34,7 @@ from app.services.manual_violation import ManualViolationService
 from app.services.stats import StatsService
 from app.repositories.player_account import PlayerAccountRepository
 from app.repositories.telegram_user import TelegramUserRepository
+from app.repositories.manual_contribution import ManualContributionRepository
 from app.repositories.violation_counter_reset import ViolationCounterResetRepository
 from app.utils.time import utcnow
 
@@ -634,6 +642,192 @@ async def manual_claimed_target_attack_selected(message: Message, state: FSMCont
         await state.clear()
         await message.answer("⚠️ Не удалось поставить нарушение. Попробуйте позже.")
 
+
+
+async def _return_admin_menu(message: Message, state: FSMContext, app_context: AppContext, text: str = "Главное меню") -> None:
+    await state.clear()
+    async with app_context.session_maker() as session:
+        is_registered = await RegistrationService(session, app_context.clash_client).is_registered(message.from_user.id)
+    await message.answer(text, reply_markup=main_menu(True, is_registered))
+
+
+@router.message(F.text == "➕ Начислить баллы")
+async def manual_contribution_start(message: Message, state: FSMContext, app_context: AppContext) -> None:
+    try:
+        _ensure_admin(app_context, message.from_user.id)
+    except PermissionError:
+        await message.answer("⛔ Недостаточно прав")
+        return
+    async with app_context.session_maker() as session:
+        players = await ManualContributionRepository(session).current_main_clan_players(app_context.config.main_clan_tag)
+    await state.set_state(ManualContributionStates.choosing_player)
+    await state.update_data(manual_contribution_saved_id=None)
+    if not players:
+        await message.answer("⚠️ В основном клане сейчас нет игроков.", reply_markup=manual_contribution_cancel_keyboard(back=False))
+        return
+    await message.answer(
+        "Выберите игрока для начисления баллов:",
+        reply_markup=manual_contribution_players_keyboard(players, 0),
+    )
+
+
+@router.callback_query(F.data.startswith("manual_contribution:"))
+async def manual_contribution_callback(callback: CallbackQuery, state: FSMContext, app_context: AppContext) -> None:
+    try:
+        _ensure_admin(app_context, callback.from_user.id)
+    except PermissionError:
+        await callback.answer("⛔ Недостаточно прав")
+        return
+    data = callback.data or ""
+    action = data.split(":")[1]
+    if action == "admin_menu":
+        async with app_context.session_maker() as session:
+            is_registered = await RegistrationService(session, app_context.clash_client).is_registered(callback.from_user.id)
+        await callback.message.answer("Главное меню", reply_markup=main_menu(True, is_registered))
+        await callback.answer()
+        return
+    if action == "cancel":
+        await state.clear()
+        async with app_context.session_maker() as session:
+            is_registered = await RegistrationService(session, app_context.clash_client).is_registered(callback.from_user.id)
+        await callback.message.answer("Главное меню", reply_markup=main_menu(True, is_registered))
+        await callback.answer()
+        return
+    if action == "page":
+        page = int(data.split(":")[2])
+        async with app_context.session_maker() as session:
+            players = await ManualContributionRepository(session).current_main_clan_players(app_context.config.main_clan_tag)
+        await callback.message.edit_reply_markup(reply_markup=manual_contribution_players_keyboard(players, page))
+        await callback.answer()
+        return
+    if action == "player":
+        player_id = int(data.split(":")[2])
+        async with app_context.session_maker() as session:
+            player = await ManualContributionRepository(session).get_current_main_clan_player(player_id, app_context.config.main_clan_tag)
+        if player is None:
+            await callback.answer("⚠️ Игрок недоступен", show_alert=True)
+            return
+        await state.update_data(player_id=player.id, player_name=player.name, player_tag=player.player_tag)
+        await state.set_state(ManualContributionStates.entering_points)
+        await callback.message.answer(
+            f"Выбран игрок: {player.name} ({player.player_tag})\nВведите количество баллов:",
+            reply_markup=manual_contribution_cancel_keyboard(),
+        )
+        await callback.answer()
+        return
+    if action == "back":
+        current = await state.get_state()
+        if current == str(ManualContributionStates.entering_points):
+            async with app_context.session_maker() as session:
+                players = await ManualContributionRepository(session).current_main_clan_players(app_context.config.main_clan_tag)
+            await state.set_state(ManualContributionStates.choosing_player)
+            await callback.message.answer("Выберите игрока для начисления баллов:", reply_markup=manual_contribution_players_keyboard(players, 0))
+        elif current == str(ManualContributionStates.entering_comment):
+            await state.set_state(ManualContributionStates.entering_points)
+            await callback.message.answer("Введите количество баллов:", reply_markup=manual_contribution_cancel_keyboard())
+        else:
+            await state.set_state(ManualContributionStates.entering_comment)
+            await callback.message.answer("Укажите причину начисления баллов:", reply_markup=manual_contribution_cancel_keyboard())
+        await callback.answer()
+        return
+    if action == "confirm":
+        data_state = await state.get_data()
+        if data_state.get("manual_contribution_saved_id"):
+            await callback.answer()
+            return
+        try:
+            async with app_context.session_maker() as session:
+                repo = ManualContributionRepository(session)
+                player = await repo.get_current_main_clan_player(data_state["player_id"], app_context.config.main_clan_tag)
+                if player is None:
+                    raise ValueError("player not in main clan")
+                created_at = utcnow()
+                adj = await repo.add_manual_adjustment(
+                    player_id=player.id,
+                    clan_tag=app_context.config.main_clan_tag,
+                    points=int(data_state["points"]),
+                    comment=data_state["comment"],
+                    created_by_telegram_id=callback.from_user.id,
+                    created_by_username=callback.from_user.username,
+                    created_at=created_at,
+                )
+                period = await PeriodService(session).current_cycle(created_at)
+                current_total = sum(a.points for a in await repo.manual_adjustments_for_player(player.id, app_context.config.main_clan_tag, period.start, period.end))
+                await session.commit()
+                await state.update_data(manual_contribution_saved_id=adj.id)
+                logger.info("Manual contribution adjustment created: player_tag=%s points=%s admin_telegram_id=%s adjustment_id=%s", player.player_tag, adj.points, callback.from_user.id, adj.id)
+            await state.set_state(ManualContributionStates.saved)
+            await state.clear()
+            await callback.message.answer(
+                "✅ Баллы начислены\n\n"
+                f"Игрок: {data_state['player_name']} ({data_state['player_tag']})\n"
+                f"Начислено: +{int(data_state['points'])}\n"
+                f"Причина: {data_state['comment']}\n\n"
+                f"Ручных баллов игрока за текущий цикл: +{current_total}",
+                reply_markup=admin_menu_button_keyboard(),
+            )
+        except Exception:
+            logger.exception("Failed to create manual contribution adjustment")
+            await callback.message.answer("❌ Не удалось начислить баллы. Попробуйте позже.")
+        await callback.answer()
+        return
+
+
+@router.message(ManualContributionStates.entering_points)
+async def manual_contribution_points(message: Message, state: FSMContext, app_context: AppContext) -> None:
+    try:
+        _ensure_admin(app_context, message.from_user.id)
+    except PermissionError:
+        await message.answer("⛔ Недостаточно прав")
+        await state.clear()
+        return
+    text = (message.text or "").strip()
+    if text == "❌ Отмена":
+        await _return_admin_menu(message, state, app_context)
+        return
+    if text == "⬅️ Назад":
+        async with app_context.session_maker() as session:
+            players = await ManualContributionRepository(session).current_main_clan_players(app_context.config.main_clan_tag)
+        await state.set_state(ManualContributionStates.choosing_player)
+        await message.answer("Выберите игрока для начисления баллов:", reply_markup=manual_contribution_players_keyboard(players, 0))
+        return
+    if not text.isdigit() or not (1 <= int(text) <= 10000):
+        await message.answer("Введите целое количество баллов от 1 до 10000.")
+        return
+    await state.update_data(points=int(text))
+    await state.set_state(ManualContributionStates.entering_comment)
+    await message.answer("Укажите причину начисления баллов:", reply_markup=manual_contribution_cancel_keyboard())
+
+
+@router.message(ManualContributionStates.entering_comment)
+async def manual_contribution_comment(message: Message, state: FSMContext, app_context: AppContext) -> None:
+    try:
+        _ensure_admin(app_context, message.from_user.id)
+    except PermissionError:
+        await message.answer("⛔ Недостаточно прав")
+        await state.clear()
+        return
+    text = (message.text or "").strip()
+    if text == "❌ Отмена":
+        await _return_admin_menu(message, state, app_context)
+        return
+    if text == "⬅️ Назад":
+        await state.set_state(ManualContributionStates.entering_points)
+        await message.answer("Введите количество баллов:", reply_markup=manual_contribution_cancel_keyboard())
+        return
+    if not (3 <= len(text) <= 500):
+        await message.answer("Комментарий должен содержать от 3 до 500 символов.")
+        return
+    await state.update_data(comment=text)
+    data = await state.get_data()
+    await state.set_state(ManualContributionStates.confirming)
+    await message.answer(
+        "Подтвердите начисление:\n\n"
+        f"Игрок: {data['player_name']} ({data['player_tag']})\n"
+        f"Баллы: +{int(data['points'])}\n"
+        f"Причина: {text}",
+        reply_markup=manual_contribution_confirm_keyboard(),
+    )
 
 @router.message(F.text == "🏰 Столица")
 async def capital_raid_report_start(message: Message, app_context: AppContext) -> None:

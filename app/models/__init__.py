@@ -1,6 +1,7 @@
 from app.models.admin_notification_history import AdminNotificationHistory
 from app.models.attack import Attack
 from app.models.clan_membership_history import ClanMembershipHistory
+from app.models.manual_contribution_adjustment import ManualContributionAdjustment
 from app.models.clan_settings import ClanSettings
 from app.models.capital_raid import CapitalRaidParticipant, CapitalRaidWeekend
 from app.models.capital_raid_violation import CapitalRaidViolation
@@ -21,6 +22,7 @@ __all__ = [
     "AdminNotificationHistory",
     "Attack",
     "ClanMembershipHistory",
+    "ManualContributionAdjustment",
     "ClanSettings",
     "CapitalRaidParticipant",
     "CapitalRaidWeekend",
