@@ -91,6 +91,7 @@ def _build_contribution_calculation_for_attack(
     *,
     target: int,
     stored_violation,
+    attacker_position: int = 3,
     war_type: WarType = WarType.REGULAR,
 ):
     period = SimpleNamespace(start=NOW - timedelta(days=1), end=NOW)
@@ -110,7 +111,7 @@ def _build_contribution_calculation_for_attack(
         attacker_tag="#DARK",
         stars=3,
         destruction=100,
-        attacker_position=3,
+        attacker_position=attacker_position,
         defender_position=target,
         observed_at=NOW,
     )
@@ -177,8 +178,48 @@ def test_contribution_uses_saved_too_low_violation(app_yaml_config, monkeypatch)
     )
 
     assert component.violation_code == ViolationCode.TOO_LOW
-    assert component.score_delta == -36.0
-    assert calculation.score_for("#DARK") == -36.0
+    assert component.score_delta == -40.0
+    assert calculation.score_for("#DARK") == -40.0
+
+
+def test_contribution_too_low_penalty_uses_plus_three_boundary(app_yaml_config, monkeypatch):
+    calculation = _build_contribution_calculation_for_attack(
+        app_yaml_config,
+        monkeypatch,
+        target=15,
+        stored_violation=SimpleNamespace(code=ViolationCode.TOO_LOW),
+        attacker_position=10,
+    )
+
+    component = next(
+        item
+        for item in calculation.components_by_tag["#DARK"]
+        if item.kind == "attack"
+    )
+
+    assert component.violation_code == ViolationCode.TOO_LOW
+    assert component.score_delta == -24.0
+    assert calculation.score_for("#DARK") == -24.0
+
+
+def test_contribution_does_not_infer_too_low_without_stored_violation(app_yaml_config, monkeypatch):
+    calculation = _build_contribution_calculation_for_attack(
+        app_yaml_config,
+        monkeypatch,
+        target=15,
+        stored_violation=None,
+        attacker_position=10,
+    )
+
+    component = next(
+        item
+        for item in calculation.components_by_tag["#DARK"]
+        if item.kind == "attack"
+    )
+
+    assert component.violation_code is None
+    assert component.score_delta == 48.0
+    assert calculation.score_for("#DARK") == 48.0
 
 
 def test_contribution_ignores_saved_automatic_violation_for_cwl(

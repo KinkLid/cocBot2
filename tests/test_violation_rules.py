@@ -248,3 +248,101 @@ def test_updated_violation_reason_texts() -> None:
     assert low.reason_text == (
         "Атака по сопернику ниже разрешенной позиции в первые 12 часов"
     )
+
+
+def test_bottom_edge_position_49_falls_back_above_without_phantom_targets() -> None:
+    start = datetime(2026, 4, 1, 10, 0, tzinfo=UTC)
+    seen_at = start + timedelta(hours=2)
+    attacks = make_results([48, 49, 50], seen_at - timedelta(minutes=1))
+
+    allowed_targets = resolve_allowed_targets_for_attack(
+        start, seen_at, 49, range(1, 51), attacks
+    )
+    decision = evaluate_attack_violation(
+        start, seen_at, 49, 47, range(1, 51), attacks
+    )
+
+    assert allowed_targets.positions == frozenset({47})
+    assert all(position <= 50 for position in allowed_targets.positions)
+    assert 51 not in allowed_targets.positions
+    assert 52 not in allowed_targets.positions
+    assert decision.violated is False
+
+
+def test_bottom_edge_position_50_falls_back_to_nearest_above() -> None:
+    start = datetime(2026, 4, 1, 10, 0, tzinfo=UTC)
+    seen_at = start + timedelta(hours=2)
+    attacks = make_results([49, 50], seen_at - timedelta(minutes=1))
+
+    allowed_targets = resolve_allowed_targets_for_attack(
+        start, seen_at, 50, range(1, 51), attacks
+    )
+    decision = evaluate_attack_violation(
+        start, seen_at, 50, 48, range(1, 51), attacks
+    )
+
+    assert allowed_targets.positions == frozenset({48})
+    assert decision.violated is False
+
+
+def test_top_edge_position_1_falls_back_to_nearest_below() -> None:
+    start = datetime(2026, 4, 1, 10, 0, tzinfo=UTC)
+    seen_at = start + timedelta(hours=2)
+    attacks = make_results([1, 2, 3, 4], seen_at - timedelta(minutes=1))
+
+    allowed_targets = resolve_allowed_targets_for_attack(
+        start, seen_at, 1, range(1, 51), attacks
+    )
+    decision = evaluate_attack_violation(
+        start, seen_at, 1, 5, range(1, 51), attacks
+    )
+
+    assert allowed_targets.positions == frozenset({5})
+    assert decision.violated is False
+
+
+def test_25v25_allowed_targets_never_exceed_roster_positions() -> None:
+    start = datetime(2026, 4, 1, 10, 0, tzinfo=UTC)
+    seen_at = start + timedelta(hours=2)
+    attacks = make_results([24, 25], seen_at - timedelta(minutes=1))
+
+    allowed_targets = resolve_allowed_targets_for_attack(
+        start, seen_at, 25, range(1, 26), attacks
+    )
+
+    assert allowed_targets.allow_any is False
+    assert allowed_targets.positions
+    assert max(allowed_targets.positions) <= 25
+
+
+def test_all_real_targets_tripled_sets_allow_any() -> None:
+    start = datetime(2026, 4, 1, 10, 0, tzinfo=UTC)
+    seen_at = start + timedelta(hours=2)
+    attacks = make_results(range(1, 51), seen_at - timedelta(minutes=1))
+
+    allowed_targets = resolve_allowed_targets_for_attack(
+        start, seen_at, 49, range(1, 51), attacks
+    )
+    decision = evaluate_attack_violation(
+        start, seen_at, 49, 1, range(1, 51), attacks
+    )
+
+    assert allowed_targets.allow_any is True
+    assert decision.violated is False
+
+
+def test_base_window_open_target_prevents_fallback() -> None:
+    start = datetime(2026, 4, 1, 10, 0, tzinfo=UTC)
+    seen_at = start + timedelta(hours=2)
+    attacks = make_results([48, 50], seen_at - timedelta(minutes=1))
+
+    allowed_targets = resolve_allowed_targets_for_attack(
+        start, seen_at, 49, range(1, 51), attacks
+    )
+    decision = evaluate_attack_violation(
+        start, seen_at, 49, 47, range(1, 51), attacks
+    )
+
+    assert allowed_targets.positions == frozenset({48, 49, 50})
+    assert decision.violated is True
+    assert decision.code == ViolationCode.ABOVE_SELF
