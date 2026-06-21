@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from app.models import PlayerAccount, ReturnEvent, War
 from app.services.startup_sync import StartupSyncService
 from tests.fakes import FakeSender
-from tests.helpers import make_clan_member, make_regular_war
+from tests.helpers import make_clan_member, make_player_profile, make_regular_war
 
 
 @pytest.mark.asyncio
@@ -25,6 +25,17 @@ async def test_startup_sync_saves_clan_roster_and_players(session, app_context, 
     players = list((await session.execute(select(PlayerAccount).order_by(PlayerAccount.player_tag))).scalars())
     assert [player.player_tag for player in players] == ["#P2", "#P8"]
     assert all(player.current_in_clan for player in players)
+
+
+@pytest.mark.asyncio
+async def test_startup_sync_ignores_single_member_profile_failure(app_context, fake_clash_client):
+    fake_clash_client.members = [make_clan_member("#P2", "Alpha", 1), make_clan_member("#P8", "Bravo", 2)]
+    fake_clash_client.players["#P8"] = make_player_profile("#P8", "Bravo")
+
+    report = await StartupSyncService(app_context, FakeSender()).run()
+
+    assert report.clan_sync_ok is True
+    assert report.members_processed == 2
 
 
 @pytest.mark.asyncio

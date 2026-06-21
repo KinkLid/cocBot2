@@ -5,12 +5,12 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import select
 
-from app.models import CycleBoundary, DepartedPlayerArchive, PlayerAccount, ReturnEvent
+from app.models import CycleBoundary, DepartedPlayerArchive, ClanMembershipHistory, PlayerAccount, PlayerDonationSnapshot, ReturnEvent
 from app.services.clan_sync import ClanSyncService
 from app.services.notifications import AdminNotifier
 from app.services.stats import StatsService
 from tests.fakes import FakeSender
-from tests.helpers import make_clan_member
+from tests.helpers import make_clan_member, make_player_profile
 
 
 @pytest.mark.asyncio
@@ -23,6 +23,30 @@ async def test_clan_roster_is_saved(session, fake_clash_client, app_yaml_config)
     players = list((await session.execute(select(PlayerAccount).order_by(PlayerAccount.player_tag))).scalars())
     assert [player.player_tag for player in players] == ["#P2", "#P8"]
     assert all(player.current_in_clan for player in players)
+
+
+@pytest.mark.asyncio
+async def test_member_profile_failure_does_not_abort_roster_sync(session, fake_clash_client, app_yaml_config, caplog):
+    fake_clash_client.members = [make_clan_member("#P2", "Alpha", 1), make_clan_member("#P8", "Bravo", 2)]
+    fake_clash_client.players["#P8"] = make_player_profile("#P8", "Bravo")
+    fake_clash_client.players["#P8"].donations = 123
+    fake_clash_client.players["#P8"].donations_received = 45
+    notifier = AdminNotifier(session, app_yaml_config, FakeSender())
+    caplog.set_level("WARNING")
+
+    processed = await ClanSyncService(session, fake_clash_client, app_yaml_config, notifier).sync_members()
+
+    assert processed == 2
+    players = list((await session.execute(select(PlayerAccount).order_by(PlayerAccount.player_tag))).scalars())
+    assert [player.player_tag for player in players] == ["#P2", "#P8"]
+    assert all(player.current_in_clan for player in players)
+    memberships = list((await session.execute(select(ClanMembershipHistory).order_by(ClanMembershipHistory.player_id))).scalars())
+    assert len(memberships) == 2
+    snapshots = list((await session.execute(select(PlayerDonationSnapshot))).scalars())
+    assert [snapshot.player_tag for snapshot in snapshots] == ["#P8"]
+    assert snapshots[0].donations == 123
+    assert snapshots[0].donations_received == 45
+    assert "Failed to load player profile for donation snapshot: #P2" in caplog.text
 
 
 @pytest.mark.asyncio

@@ -22,7 +22,7 @@ async def test_capital_button_reads_current_cycle_without_fsm_or_api(app_context
     )
     message = FakeMessage(text="🏰 Столица", user_id=1)
     await capital_raid_report_start(message, app_context)
-    assert "По столице за текущий цикл" in message.answer.await_args.args[0]
+    assert message.answer.await_args.args[0] == "⚠️ По клановой столице за текущий цикл пока нет данных."
 
 
 @pytest.mark.asyncio
@@ -36,7 +36,7 @@ async def test_dev_capital_button_reads_current_cycle_without_live_sync(app_cont
     )
     message = FakeMessage(text="🧪 Dev вклад в столицу", user_id=1)
     await dev_capital(message, app_context)
-    assert "По столице за текущий цикл" in message.answer.await_args.args[0]
+    assert message.answer.await_args.args[0] == "⚠️ По клановой столице за текущий цикл пока нет данных."
 
 
 @pytest.mark.asyncio

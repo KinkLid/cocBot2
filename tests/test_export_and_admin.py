@@ -46,8 +46,12 @@ async def test_json_export_for_current_cycle(session, app_yaml_config, tmp_path:
         for attack in war["attacks"]
     ]
     assert cwl_attacks
-    assert cwl_attacks[0]["attacker_position"] == 2
-    assert cwl_attacks[0]["defender_position"] == 2
+    p2_attack = next(attack for attack in cwl_attacks if attack["attacker_tag"] == "#P2")
+    assert p2_attack["attacker_position"] == 2
+    assert p2_attack["defender_position"] == 2
+    p8_attack = next(attack for attack in cwl_attacks if attack["attacker_tag"] == "#P8")
+    assert p8_attack["attacker_position"] == 1
+    assert p8_attack["defender_position"] == 1
 
 
 @pytest.mark.asyncio
@@ -148,17 +152,19 @@ async def test_admin_players_list_callback_sends_chunks_when_report_too_long(app
         return SimpleNamespace(start=datetime(2026, 4, 1, 0, tzinfo=UTC), end=datetime(2026, 4, 2, 0, tzinfo=UTC))
 
     async def fake_clan_stats(self, period_start, period_end, sort_by="clan_order"):
-        return FormattedStats(text=long_text, rows=[])
+        return FormattedStats(text="ignored", rows=[SimpleNamespace(player_tag="#P2")])
 
     monkeypatch.setattr(PeriodService, "current_cycle", fake_current_cycle)
     monkeypatch.setattr(StatsService, "clan_stats", fake_clan_stats)
+    monkeypatch.setattr(StatsService, "format_compact_players_by_stars", lambda self, rows: long_text)
 
     callback = FakeCallback(data="admin_sort:stars", user_id=1)
     await admin_players_sort(callback, app_context)
 
     callback.message.edit_text.assert_awaited()
     notice = callback.message.edit_text.await_args.args[0]
-    assert "Отчет слишком большой" in notice
+    assert notice == "📄 Отчет слишком большой, отправляю частями ниже."
+    assert callback.message.edit_text.await_args.args[0] != long_text
     assert callback.message.answer.await_count > 1
     delivered = "".join(call.args[0] for call in callback.message.answer.await_args_list)
     assert delivered == long_text
@@ -166,19 +172,15 @@ async def test_admin_players_list_callback_sends_chunks_when_report_too_long(app
 
 @pytest.mark.asyncio
 async def test_capital_button_handler_returns_report_for_admin(app_context, monkeypatch):
-    from tests.fakes import FakeState
-
     message = FakeMessage(text="🏰 Столица", user_id=1)
-    await capital_raid_report_start(message, FakeState(), app_context)
-    assert "Введите, за сколько последних рейдов" in message.answer.await_args_list[0].args[0]
+    await capital_raid_report_start(message, app_context)
+    assert message.answer.await_args.args[0] == "⚠️ По клановой столице за текущий цикл пока нет данных."
 
 
 @pytest.mark.asyncio
 async def test_capital_button_handler_denies_non_admin(app_context):
-    from tests.fakes import FakeState
-
     message = FakeMessage(text="🏰 Столица", user_id=999)
-    await capital_raid_report_start(message, FakeState(), app_context)
+    await capital_raid_report_start(message, app_context)
     assert "⛔ Недостаточно прав" in message.answer.await_args.args[0]
 
 
@@ -190,10 +192,11 @@ async def test_message_too_long_error_no_longer_reproduced_in_admin_callback(app
         return SimpleNamespace(start=datetime(2026, 4, 1, 0, tzinfo=UTC), end=datetime(2026, 4, 2, 0, tzinfo=UTC))
 
     async def fake_clan_stats(self, period_start, period_end, sort_by="clan_order"):
-        return FormattedStats(text=long_text, rows=[])
+        return FormattedStats(text="ignored", rows=[SimpleNamespace(player_tag="#P2")])
 
     monkeypatch.setattr(PeriodService, "current_cycle", fake_current_cycle)
     monkeypatch.setattr(StatsService, "clan_stats", fake_clan_stats)
+    monkeypatch.setattr(StatsService, "format_compact_players_by_place", lambda self, rows: long_text)
 
     callback = FakeCallback(data="admin_sort:place", user_id=1)
 
@@ -206,7 +209,11 @@ async def test_message_too_long_error_no_longer_reproduced_in_admin_callback(app
 
     await admin_players_sort(callback, app_context)
 
+    assert callback.message.edit_text.await_args.args[0] == "📄 Отчет слишком большой, отправляю частями ниже."
+    assert callback.message.edit_text.await_args.args[0] != long_text
     assert callback.message.answer.await_count > 1
+    delivered = "".join(call.args[0] for call in callback.message.answer.await_args_list)
+    assert delivered == long_text
     callback.answer.assert_awaited()
 
 
