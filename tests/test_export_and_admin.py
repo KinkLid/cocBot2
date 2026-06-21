@@ -31,6 +31,9 @@ from app.bot.states.violations import ViolationStates
 from tests.test_stats import seed_stats_data
 
 
+CAPITAL_NO_DATA_TEXT = "⚠️ По столице за текущий цикл пока нет данных."
+
+
 @pytest.mark.asyncio
 async def test_json_export_for_current_cycle(session, app_yaml_config, tmp_path: Path):
     await seed_stats_data(session)
@@ -174,7 +177,7 @@ async def test_admin_players_list_callback_sends_chunks_when_report_too_long(app
 async def test_capital_button_handler_returns_report_for_admin(app_context, monkeypatch):
     message = FakeMessage(text="🏰 Столица", user_id=1)
     await capital_raid_report_start(message, app_context)
-    assert message.answer.await_args.args[0] == "⚠️ По клановой столице за текущий цикл пока нет данных."
+    assert message.answer.await_args.args[0] == CAPITAL_NO_DATA_TEXT
 
 
 @pytest.mark.asyncio

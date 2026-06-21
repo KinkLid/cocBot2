@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import func, select
@@ -19,6 +19,19 @@ from app.services.manual_violation import ManualViolationService
 from app.services.period import PeriodService
 from app.services.war_sync import WarSyncService
 from tests.fakes import FakeMessage, FakeState, FakeSender
+
+
+def as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def test_as_utc_normalizes_sqlite_naive_datetime_to_utc():
+    naive = datetime(2026, 5, 20, 10, 0, 0)
+    aware = datetime(2026, 5, 20, 10, 0, 0, tzinfo=timezone.utc)
+
+    assert as_utc(naive) == as_utc(aware)
 
 
 @pytest.mark.asyncio
@@ -84,7 +97,7 @@ async def test_manual_violation_flow(session, app_context, monkeypatch):
     assert violation is not None
     assert violation.code == ViolationCode.CLAIMED_TARGET
     assert violation.is_manual is True
-    assert violation.detected_at == now
+    assert as_utc(violation.detected_at) == as_utc(now)
 
 
 @pytest.mark.asyncio
