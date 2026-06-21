@@ -701,14 +701,22 @@ async def manual_contribution_callback(callback: CallbackQuery, state: FSMContex
         await callback.answer()
         return
     if action == "page":
-        page = int(parts[2])
+        try:
+            page = max(0, int(parts[2]))
+        except (IndexError, ValueError):
+            await callback.answer("⚠️ Некорректная операция", show_alert=True)
+            return
         async with app_context.session_maker() as session:
             players = await ManualContributionRepository(session).current_main_clan_players(app_context.config.main_clan_tag)
         await callback.message.edit_reply_markup(reply_markup=manual_contribution_players_keyboard(players, page))
         await callback.answer()
         return
     if action == "player":
-        player_id = int(parts[2])
+        try:
+            player_id = int(parts[2])
+        except (IndexError, ValueError):
+            await callback.answer("⚠️ Некорректная операция", show_alert=True)
+            return
         async with app_context.session_maker() as session:
             player = await ManualContributionRepository(session).get_current_main_clan_player(player_id, app_context.config.main_clan_tag)
         if player is None:
@@ -732,6 +740,11 @@ async def manual_contribution_callback(callback: CallbackQuery, state: FSMContex
         elif current == str(ManualContributionStates.entering_comment):
             await state.set_state(ManualContributionStates.entering_points)
             await callback.message.answer("Введите количество баллов:", reply_markup=manual_contribution_cancel_keyboard())
+        elif current == str(ManualContributionStates.choosing_player):
+            await state.clear()
+            async with app_context.session_maker() as session:
+                is_registered = await RegistrationService(session, app_context.clash_client).is_registered(callback.from_user.id)
+            await callback.message.answer("Главное меню", reply_markup=main_menu(True, is_registered))
         else:
             await state.set_state(ManualContributionStates.entering_comment)
             await callback.message.answer("Укажите причину начисления баллов:", reply_markup=manual_contribution_cancel_keyboard())
@@ -810,7 +823,6 @@ async def manual_contribution_points(message: Message, state: FSMContext, app_co
         _ensure_admin(app_context, message.from_user.id)
     except PermissionError:
         await message.answer("⛔ Недостаточно прав")
-        await state.clear()
         return
     text = (message.text or "").strip()
     if text == "❌ Отмена":
@@ -836,7 +848,6 @@ async def manual_contribution_comment(message: Message, state: FSMContext, app_c
         _ensure_admin(app_context, message.from_user.id)
     except PermissionError:
         await message.answer("⛔ Недостаточно прав")
-        await state.clear()
         return
     text = (message.text or "").strip()
     if text == "❌ Отмена":

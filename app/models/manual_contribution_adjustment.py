@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -16,7 +16,7 @@ class ManualContributionAdjustment(Base):
         Index("ix_manual_contribution_adjustments_clan_tag", "clan_tag"),
         Index("ix_manual_contribution_adjustments_created_at", "created_at"),
         Index("ix_manual_contribution_adjustments_clan_tag_created_at", "clan_tag", "created_at"),
-        UniqueConstraint("operation_token", name="uq_manual_contribution_adjustments_operation_token"),
+        Index("uq_manual_contribution_adjustments_operation_token", "operation_token", unique=True),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

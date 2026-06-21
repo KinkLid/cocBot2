@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String
+from sqlalchemy import Boolean, DateTime, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -10,9 +10,10 @@ from app.db.base import Base
 
 class PlayerAccount(Base):
     __tablename__ = "player_accounts"
+    __table_args__ = (Index("ix_player_accounts_player_tag", "player_tag"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    player_tag: Mapped[str] = mapped_column(String(20), unique=True, index=True)
+    player_tag: Mapped[str] = mapped_column(String(20), unique=True)
     name: Mapped[str] = mapped_column(String(100))
     town_hall: Mapped[int] = mapped_column(Integer, default=1)
     current_clan_tag: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
