@@ -16,7 +16,7 @@ class PlayerCapitalContributionSnapshot(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    player_tag: Mapped[str] = mapped_column(String(20), index=True)
-    clan_tag: Mapped[str] = mapped_column(String(20), index=True)
-    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    player_tag: Mapped[str] = mapped_column(String(20))
+    clan_tag: Mapped[str] = mapped_column(String(20))
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     value: Mapped[int] = mapped_column(Integer, default=0)

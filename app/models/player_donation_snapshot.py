@@ -18,7 +18,7 @@ class PlayerDonationSnapshot(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     player_tag: Mapped[str] = mapped_column(String(20), nullable=False)
-    player_id: Mapped[int | None] = mapped_column(ForeignKey("player_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
+    player_id: Mapped[int | None] = mapped_column(ForeignKey("player_accounts.id", ondelete="SET NULL"), nullable=True)
     clan_tag: Mapped[str] = mapped_column(String(20), nullable=False)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     donations: Mapped[int] = mapped_column(Integer, default=0)

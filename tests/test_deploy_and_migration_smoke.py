@@ -56,3 +56,45 @@ def test_migration_helpers_detect_existing_table_and_indexes() -> None:
         assert migration._table_exists(conn, "player_donation_snapshots") is True
         assert migration._index_exists(conn, "player_donation_snapshots", "ix_player_donation_snapshots_player_tag") is True
         assert migration._index_exists(conn, "player_donation_snapshots", "ix_player_donation_snapshots_observed_at") is False
+
+import os
+import subprocess
+
+
+def _run_alembic(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    db = tmp_path / "migration.sqlite3"
+    env = os.environ.copy()
+    env["DATABASE_URL"] = f"sqlite+aiosqlite:///{db}"
+    return subprocess.run(["alembic", *args], cwd=REPO_ROOT, env=env, text=True, capture_output=True, check=False)
+
+
+def test_alembic_round_trip_and_check_on_empty_sqlite(tmp_path: Path) -> None:
+    for args in [("upgrade", "head"), ("check",), ("downgrade", "base"), ("upgrade", "head"), ("check",)]:
+        result = _run_alembic(tmp_path, *args)
+        assert result.returncode == 0, result.stdout + result.stderr
+    assert "No new upgrade operations detected" in (result.stdout + result.stderr)
+
+
+def test_alembic_upgrade_from_0009_to_head_and_manual_indexes(tmp_path: Path) -> None:
+    assert _run_alembic(tmp_path, "upgrade", "0009_manual_contribution_adjustments").returncode == 0
+    assert _run_alembic(tmp_path, "upgrade", "head").returncode == 0
+    check = _run_alembic(tmp_path, "check")
+    assert check.returncode == 0, check.stdout + check.stderr
+    engine = sa.create_engine(f"sqlite+pysqlite:///{tmp_path / 'migration.sqlite3'}")
+    inspector = sa.inspect(engine)
+    columns = {column["name"] for column in inspector.get_columns("manual_contribution_adjustments")}
+    indexes = {index["name"]: index for index in inspector.get_indexes("manual_contribution_adjustments")}
+    assert "manual_contribution_adjustments" in inspector.get_table_names()
+    assert "operation_token" in columns
+    assert indexes["uq_manual_contribution_adjustments_operation_token"]["unique"] == 1
+    assert {"ix_manual_contribution_adjustments_player_id", "ix_manual_contribution_adjustments_clan_tag", "ix_manual_contribution_adjustments_created_at", "ix_manual_contribution_adjustments_clan_tag_created_at"}.issubset(indexes)
+    engine.dispose()
+
+
+def test_alembic_head_is_idempotent_and_check_clean(tmp_path: Path) -> None:
+    assert _run_alembic(tmp_path, "upgrade", "head").returncode == 0
+    repeat = _run_alembic(tmp_path, "upgrade", "head")
+    assert repeat.returncode == 0, repeat.stdout + repeat.stderr
+    check = _run_alembic(tmp_path, "check")
+    assert check.returncode == 0, check.stdout + check.stderr
+    assert "No new upgrade operations detected" in (check.stdout + check.stderr)
