@@ -47,6 +47,7 @@ class ManualContributionRepository:
         created_by_telegram_id: int,
         created_by_username: str | None,
         created_at: datetime,
+        operation_token: str,
     ) -> ManualContributionAdjustment:
         if points <= 0:
             raise ValueError("points must be positive")
@@ -60,10 +61,34 @@ class ManualContributionRepository:
             created_by_telegram_id=created_by_telegram_id,
             created_by_username=created_by_username,
             created_at=created_at,
+            operation_token=operation_token,
         )
         self.session.add(adjustment)
         await self.session.flush()
         return adjustment
+
+
+    async def get_by_operation_token(self, operation_token: str) -> ManualContributionAdjustment | None:
+        if not operation_token:
+            return None
+        return await self.session.scalar(
+            select(ManualContributionAdjustment).where(
+                ManualContributionAdjustment.operation_token == operation_token
+            )
+        )
+
+    async def manual_adjustment_total_for_player(self, player_id: int, clan_tag: str, period_start: datetime, period_end: datetime) -> int:
+        if not hasattr(self.session, "scalar"):
+            return 0
+        total = await self.session.scalar(
+            select(func.coalesce(func.sum(ManualContributionAdjustment.points), 0)).where(
+                ManualContributionAdjustment.player_id == player_id,
+                ManualContributionAdjustment.clan_tag == clan_tag,
+                ManualContributionAdjustment.created_at >= period_start,
+                ManualContributionAdjustment.created_at < period_end,
+            )
+        )
+        return int(total or 0)
 
     async def manual_adjustments_for_player(self, player_id: int, clan_tag: str, period_start: datetime, period_end: datetime) -> list[ManualContributionAdjustment]:
         if not hasattr(self.session, "scalars"):

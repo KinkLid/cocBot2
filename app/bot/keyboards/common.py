@@ -54,9 +54,9 @@ def manual_contribution_cancel_keyboard(back: bool = True) -> InlineKeyboardMark
     rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="manual_contribution:cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-def manual_contribution_confirm_keyboard() -> InlineKeyboardMarkup:
+def manual_contribution_confirm_keyboard(operation_token: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Начислить", callback_data="manual_contribution:confirm")],
+        [InlineKeyboardButton(text="✅ Начислить", callback_data=f"manual_contribution:confirm:{operation_token}")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="manual_contribution:back")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="manual_contribution:cancel")],
     ])

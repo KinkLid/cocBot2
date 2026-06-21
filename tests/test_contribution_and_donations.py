@@ -357,6 +357,7 @@ def test_contribution_breakdown_still_formats_donation_component():
         donation_score_total=3.8,
         final_score=103.8,
         active_violations=0,
+        manual_adjustment_total=0,
         items=[
             ContributionBreakdownItem(
                 kind="donations",

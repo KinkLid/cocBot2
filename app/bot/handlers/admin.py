@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
+from uuid import uuid4
 
 from aiogram import F, Router
+from sqlalchemy.exc import IntegrityError
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, FSInputFile, Message
 
@@ -679,7 +682,11 @@ async def manual_contribution_callback(callback: CallbackQuery, state: FSMContex
         await callback.answer("⛔ Недостаточно прав")
         return
     data = callback.data or ""
-    action = data.split(":")[1]
+    parts = data.split(":")
+    if len(parts) < 2:
+        await callback.answer("⚠️ Некорректная операция", show_alert=True)
+        return
+    action = parts[1]
     if action == "admin_menu":
         async with app_context.session_maker() as session:
             is_registered = await RegistrationService(session, app_context.clash_client).is_registered(callback.from_user.id)
@@ -694,14 +701,14 @@ async def manual_contribution_callback(callback: CallbackQuery, state: FSMContex
         await callback.answer()
         return
     if action == "page":
-        page = int(data.split(":")[2])
+        page = int(parts[2])
         async with app_context.session_maker() as session:
             players = await ManualContributionRepository(session).current_main_clan_players(app_context.config.main_clan_tag)
         await callback.message.edit_reply_markup(reply_markup=manual_contribution_players_keyboard(players, page))
         await callback.answer()
         return
     if action == "player":
-        player_id = int(data.split(":")[2])
+        player_id = int(parts[2])
         async with app_context.session_maker() as session:
             player = await ManualContributionRepository(session).get_current_main_clan_player(player_id, app_context.config.main_clan_tag)
         if player is None:
@@ -731,9 +738,20 @@ async def manual_contribution_callback(callback: CallbackQuery, state: FSMContex
         await callback.answer()
         return
     if action == "confirm":
+        if len(parts) != 3 or not parts[2] or len(parts[2]) > 64:
+            await callback.answer("⚠️ Некорректная операция", show_alert=True)
+            return
+        operation_token = parts[2]
+        async with app_context.session_maker() as session:
+            if await ManualContributionRepository(session).get_by_operation_token(operation_token):
+                await callback.answer("Баллы уже были начислены.")
+                return
         data_state = await state.get_data()
-        if data_state.get("manual_contribution_saved_id"):
-            await callback.answer()
+        if await state.get_state() != str(ManualContributionStates.confirming):
+            await callback.answer("Эта операция устарела. Начните начисление заново.", show_alert=True)
+            return
+        if data_state.get("operation_token") != operation_token:
+            await callback.answer("Эта операция устарела. Начните начисление заново.", show_alert=True)
             return
         try:
             async with app_context.session_maker() as session:
@@ -742,6 +760,7 @@ async def manual_contribution_callback(callback: CallbackQuery, state: FSMContex
                 if player is None:
                     raise ValueError("player not in main clan")
                 created_at = utcnow()
+                period = await PeriodService(session).current_cycle(created_at)
                 adj = await repo.add_manual_adjustment(
                     player_id=player.id,
                     clan_tag=app_context.config.main_clan_tag,
@@ -750,13 +769,17 @@ async def manual_contribution_callback(callback: CallbackQuery, state: FSMContex
                     created_by_telegram_id=callback.from_user.id,
                     created_by_username=callback.from_user.username,
                     created_at=created_at,
+                    operation_token=operation_token,
                 )
-                period = await PeriodService(session).current_cycle(created_at)
-                current_total = sum(a.points for a in await repo.manual_adjustments_for_player(player.id, app_context.config.main_clan_tag, period.start, period.end))
                 await session.commit()
-                await state.update_data(manual_contribution_saved_id=adj.id)
+                total_end = max(utcnow(), created_at + timedelta(microseconds=1))
+                current_total = await repo.manual_adjustment_total_for_player(
+                    player.id,
+                    app_context.config.main_clan_tag,
+                    period.start,
+                    total_end,
+                )
                 logger.info("Manual contribution adjustment created: player_tag=%s points=%s admin_telegram_id=%s adjustment_id=%s", player.player_tag, adj.points, callback.from_user.id, adj.id)
-            await state.set_state(ManualContributionStates.saved)
             await state.clear()
             await callback.message.answer(
                 "✅ Баллы начислены\n\n"
@@ -766,6 +789,14 @@ async def manual_contribution_callback(callback: CallbackQuery, state: FSMContex
                 f"Ручных баллов игрока за текущий цикл: +{current_total}",
                 reply_markup=admin_menu_button_keyboard(),
             )
+        except IntegrityError as exc:
+            async with app_context.session_maker() as session:
+                existing = await ManualContributionRepository(session).get_by_operation_token(operation_token)
+            if existing is not None:
+                await callback.answer("Баллы уже были начислены.")
+                return
+            logger.exception("Failed to create manual contribution adjustment", exc_info=exc)
+            await callback.message.answer("❌ Не удалось начислить баллы. Попробуйте позже.")
         except Exception:
             logger.exception("Failed to create manual contribution adjustment")
             await callback.message.answer("❌ Не удалось начислить баллы. Попробуйте позже.")
@@ -818,7 +849,8 @@ async def manual_contribution_comment(message: Message, state: FSMContext, app_c
     if not (3 <= len(text) <= 500):
         await message.answer("Комментарий должен содержать от 3 до 500 символов.")
         return
-    await state.update_data(comment=text)
+    operation_token = uuid4().hex
+    await state.update_data(comment=text, operation_token=operation_token)
     data = await state.get_data()
     await state.set_state(ManualContributionStates.confirming)
     await message.answer(
@@ -826,7 +858,7 @@ async def manual_contribution_comment(message: Message, state: FSMContext, app_c
         f"Игрок: {data['player_name']} ({data['player_tag']})\n"
         f"Баллы: +{int(data['points'])}\n"
         f"Причина: {text}",
-        reply_markup=manual_contribution_confirm_keyboard(),
+        reply_markup=manual_contribution_confirm_keyboard(operation_token),
     )
 
 @router.message(F.text == "🏰 Столица")

@@ -71,6 +71,9 @@ class FakeState:
     async def get_data(self) -> dict[str, Any]:
         return dict(self._data)
 
+    async def get_state(self) -> str | None:
+        return self.state
+
 
 class FakeMessage:
     def __init__(self, text: str, user_id: int = 100, username: str | None = "tester") -> None:
