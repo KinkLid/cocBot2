@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import AppYamlConfig
 from app.models.enums import WarType
+from app.repositories.manual_contribution import ManualContributionRepository
 from app.services.dev_contribution import ContributionScoreComponent, DevContributionService
 
 
@@ -30,6 +31,7 @@ class PlayerContributionBreakdown:
     unused_attack_penalty_total: float
     donation_total: int
     donation_score_total: float
+    manual_adjustment_total: int
     final_score: float
     active_violations: int
     items: list[ContributionBreakdownItem]
@@ -37,6 +39,8 @@ class PlayerContributionBreakdown:
 
 class ContributionBreakdownService:
     def __init__(self, session: AsyncSession, config: AppYamlConfig) -> None:
+        self.session = session
+        self.config = config
         self.contribution_service = DevContributionService(session, config)
 
     async def build_player_breakdown(self, player_tag: str, period: Any) -> PlayerContributionBreakdown:
@@ -47,7 +51,23 @@ class ContributionBreakdownService:
         player_name = stats_row.player_name if stats_row is not None else player_tag
         components = calculation.components_by_tag.get(player_tag, [])
         donation_total = calculation.donations_by_tag.get(player_tag, 0)
-        items = [self._build_item(component, donation_total) for component in components]
+        items = [self._build_item(component, donation_total) for component in components if component.kind != "manual_adjustment"]
+        manual_adjustments = []
+        manual_total = 0
+        if stats_row is not None:
+            manual_adjustments = await ManualContributionRepository(self.session).manual_adjustments_for_player(
+                stats_row.player_id, self.config.main_clan_tag, period.start, period.end
+            )
+            manual_total = sum(item.points for item in manual_adjustments)
+            for adj in manual_adjustments:
+                author = f"@{adj.created_by_username}" if adj.created_by_username else f"Telegram ID {adj.created_by_telegram_id}"
+                items.append(ContributionBreakdownItem(
+                    kind="manual_adjustment",
+                    title="Ручное начисление",
+                    occurred_at=adj.created_at,
+                    score_delta=float(adj.points),
+                    details=f"{adj.comment}\n  Начислил: {author}",
+                ))
         attack_total = sum(item.score_delta for item in items if item.kind == "attack")
         penalty_total = sum(
             item.score_delta for item in items if item.kind == "unused_attack_penalty"
@@ -65,6 +85,7 @@ class ContributionBreakdownService:
             unused_attack_penalty_total=round(penalty_total, 2),
             donation_total=donation_total,
             donation_score_total=round(donation_score_total, 2),
+            manual_adjustment_total=manual_total,
             final_score=final_score,
             active_violations=calculation.active_violations_by_tag.get(player_tag, 0),
             items=items,
@@ -122,6 +143,7 @@ class ContributionBreakdownService:
                 f"Неиспользованные атаки: {breakdown.unused_attack_penalty_total:+.2f}",
                 f"Донаты: {breakdown.donation_score_total:+.2f} "
                 f"(сырой донат: {breakdown.donation_total})",
+                f"Ручные начисления: +{breakdown.manual_adjustment_total}",
                 f"Активные нарушения: {breakdown.active_violations}",
                 "",
                 f"Итого: {breakdown.final_score:.2f}",
@@ -136,7 +158,9 @@ class ContributionBreakdownService:
             f"Активные нарушения: {breakdown.active_violations}",
             "",
         ]
-        for index, item in enumerate(breakdown.items, 1):
+        manual_items = [item for item in breakdown.items if item.kind == "manual_adjustment"]
+        regular_items = [item for item in breakdown.items if item.kind != "manual_adjustment"]
+        for index, item in enumerate(regular_items, 1):
             if item.occurred_at is not None and item.kind == "attack":
                 heading = f"{item.occurred_at:%Y-%m-%d %H:%M} | {item.details}"
             elif item.details:
@@ -144,6 +168,12 @@ class ContributionBreakdownService:
             else:
                 heading = item.title
             lines.extend([f"{index}. {heading}", f"{item.score_delta:+.2f}", ""])
+        if manual_items:
+            lines.extend([f"➕ Ручные начисления: +{breakdown.manual_adjustment_total}", ""])
+            for item in manual_items:
+                when = item.occurred_at.strftime("%d.%m.%Y %H:%M UTC") if item.occurred_at else ""
+                comment, author = (item.details or "").split("\n", 1)
+                lines.extend([f"• +{int(item.score_delta)} — {comment}", author, f"  {when}", ""])
         if not breakdown.items:
             lines.extend(["Нет начислений за текущий цикл.", ""])
         lines.append(f"Итого: {breakdown.final_score:.2f}")

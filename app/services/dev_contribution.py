@@ -19,6 +19,7 @@ from app.domain.dev_contribution import (
 from app.models.enums import ViolationCode, WarType
 from app.models import ClanMembershipHistory
 from app.repositories.stats import StatsRepository
+from app.repositories.manual_contribution import ManualContributionRepository
 from app.services.active_violation_counter import ActiveViolationCounterService
 from app.services.donations import DonationService
 from app.utils.time import utcnow
@@ -53,6 +54,7 @@ class ContributionRankingRow:
     active_violations: int = 0
     donations: int = 0
     donation_points: float = 0.0
+    manual_adjustment: int = 0
 
 
 @dataclass(slots=True)
@@ -63,6 +65,7 @@ class ContributionScoreComponent:
     attack: Any | None = None
     war: Any | None = None
     violation_code: ViolationCode | None = None
+    manual_adjustment: Any | None = None
 
 
 @dataclass(slots=True)
@@ -149,10 +152,15 @@ class DevContributionService:
             )
 
         player_tags = [row.player_tag for row in stats_rows]
+        player_id_by_tag = {row.player_tag: row.player_id for row in stats_rows}
+        manual_repo = ManualContributionRepository(self.session)
+        manual_totals = await manual_repo.manual_adjustment_totals(
+            list(player_id_by_tag.values()), self.config.main_clan_tag, period.start, period.end
+        )
         attacks_rows = await self.repo.attack_rows_for_players(
             self.config.main_clan_tag, period.start, period.end, player_tags
         )
-        if require_attacks and not attacks_rows:
+        if require_attacks and not attacks_rows and not manual_totals:
             raise ContributionDataUnavailableError(
                 "⚠️ Общий вклад пока пуст: в текущем цикле еще никто не сделал атак."
             )
@@ -289,6 +297,17 @@ class DevContributionService:
                 )
             )
 
+        for tag, player_id in player_id_by_tag.items():
+            points = manual_totals.get(player_id, 0)
+            if points:
+                components_by_tag[tag].append(
+                    ContributionScoreComponent(
+                        kind="manual_adjustment",
+                        player_tag=tag,
+                        score_delta=float(points),
+                    )
+                )
+
         return ContributionCalculation(
             stats_rows=list(stats_rows),
             components_by_tag=components_by_tag,
@@ -313,6 +332,7 @@ class DevContributionService:
                     donation_points=_calculate_donation_points(
                         calculation.donations_by_tag.get(row.player_tag, 0)
                     ),
+                    manual_adjustment=int(sum(c.score_delta for c in calculation.components_by_tag.get(row.player_tag, []) if c.kind == "manual_adjustment")),
                 )
             )
         return sorted(ranking, key=lambda x: (-x.score, x.player_name.casefold(), x.player_tag))
