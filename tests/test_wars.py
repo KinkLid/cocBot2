@@ -15,6 +15,21 @@ from tests.fakes import FakeSender
 from tests.helpers import make_clan_member, make_cwl_group, make_cwl_war, make_regular_war
 
 
+def test_regular_war_fixture_contains_full_enemy_roster():
+    start = datetime(2026, 4, 1, 10, 0, tzinfo=UTC)
+
+    war = make_regular_war(start=start)
+
+    enemy_members = war.opponent.members
+    positions = [member.map_position for member in enemy_members]
+    tags = [member.tag for member in enemy_members]
+    assert war.team_size == 15
+    assert len(enemy_members) == 15
+    assert positions == list(range(1, 16))
+    assert all(position <= war.team_size for position in positions)
+    assert len(tags) == len(set(tags))
+
+
 @pytest.mark.asyncio
 async def test_regular_war_is_saved(session, fake_clash_client, app_yaml_config, monkeypatch):
     fake_clash_client.members = [make_clan_member("#P2", "Alpha", 1)]
@@ -523,7 +538,7 @@ async def test_cwl_participants_upsert_is_idempotent(session, fake_clash_client,
     await service.sync_all()
 
     participant_count = await session.scalar(select(func.count(WarParticipant.id)))
-    assert participant_count == 2
+    assert participant_count == 16
 
 
 @pytest.mark.asyncio

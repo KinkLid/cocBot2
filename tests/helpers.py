@@ -18,13 +18,48 @@ def coc_time(dt: datetime) -> str:
     return dt.astimezone(UTC).strftime("%Y%m%dT%H%M%S.000Z")
 
 
-def make_regular_war(*, start: datetime, attack_order: int = 1, attacker_position: int = 12, defender_position: int = 15, stars: int = 2, include_attack: bool = True) -> WarDTO:
+def make_enemy_roster(team_size: int, primary_member: dict | None = None) -> list[dict]:
+    roster = [
+        {
+            "tag": f"#E{position:02d}",
+            "name": f"Enemy{position}",
+            "mapPosition": position,
+            "townhallLevel": 16,
+            "attacks": [],
+        }
+        for position in range(1, team_size + 1)
+    ]
+    if primary_member is not None:
+        primary_position = primary_member["mapPosition"]
+        roster = [
+            member
+            for member in roster
+            if member["mapPosition"] != primary_position and member["tag"] != primary_member["tag"]
+        ]
+        roster.append(primary_member)
+    return sorted(roster, key=lambda member: member["mapPosition"])
+
+
+def make_regular_war(
+    *,
+    start: datetime,
+    attack_order: int = 1,
+    attacker_position: int = 12,
+    defender_position: int = 15,
+    stars: int = 2,
+    include_attack: bool = True,
+) -> WarDTO:
+    team_size = max(15, attacker_position, defender_position)
     own_member = {
         "tag": "#P2",
         "name": "Alpha",
         "mapPosition": attacker_position,
         "townhallLevel": 16,
-        "attacks": ([{"defenderTag": "#E2", "stars": stars, "destructionPercentage": 80.0, "order": attack_order}] if include_attack else []),
+        "attacks": (
+            [{"defenderTag": "#E2", "stars": stars, "destructionPercentage": 80.0, "order": attack_order}]
+            if include_attack
+            else []
+        ),
     }
     enemy_member = {
         "tag": "#E2",
@@ -35,13 +70,17 @@ def make_regular_war(*, start: datetime, attack_order: int = 1, attacker_positio
     }
     payload = {
         "state": "inWar",
-        "teamSize": 15,
+        "teamSize": team_size,
         "preparationStartTime": coc_time(start - timedelta(hours=23)),
         "startTime": coc_time(start),
         "endTime": coc_time(start + timedelta(hours=24)),
         "isFriendly": False,
         "clan": {"tag": "#CLAN", "name": "TestClan", "members": [own_member]},
-        "opponent": {"tag": "#ENEMY", "name": "EnemyClan", "members": [enemy_member]},
+        "opponent": {
+            "tag": "#ENEMY",
+            "name": "EnemyClan",
+            "members": make_enemy_roster(team_size, enemy_member),
+        },
         "clan_tag": "#CLAN",
         "war_type": "regular",
         "raw_payload": {},
@@ -77,8 +116,9 @@ def make_cwl_war(
     dto.clan.members[0].tag = attacker_tag
     dto.clan.members[0].name = attacker_name
     dto.clan.members[0].attacks[0].defender_tag = defender_tag
-    dto.opponent.members[0].tag = defender_tag
-    dto.opponent.members[0].name = defender_name
+    defender = next(member for member in dto.opponent.members if member.tag == "#E2")
+    defender.tag = defender_tag
+    defender.name = defender_name
     return dto
 
 
