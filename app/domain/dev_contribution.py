@@ -62,8 +62,8 @@ def calculate_attack_contribution(data: ContributionAttackInput) -> Contribution
         score = base_score + (triple_bonus if data.stars == 3 and allow_triple_bonus else 0)
 
     if data.is_too_low_violation and not data.is_above_self_violation:
-        excess = data.defender_position - (data.attacker_position + 10)
-        penalty_base = 8 + 2 * max(excess, 0)
+        excess = max(0, data.defender_position - (data.attacker_position + 3))
+        penalty_base = 8 + 2 * excess
         score = -2 * penalty_base if data.stars == 3 else -4 * penalty_base
 
     return ContributionResult(score=round(max(score, -40), 2))

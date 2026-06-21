@@ -157,7 +157,11 @@ class WarSyncService:
                     existing_attack.defender_town_hall = defender_th
                     existing_attack.stars = attack_dto.stars
                     existing_attack.destruction = attack_dto.destruction_percentage
-                    await self._reconcile_violation(war, existing_attack)
+                    await self._reconcile_violation(
+                        war,
+                        existing_attack,
+                        defender_positions=self._defender_positions_from_members(enemy_side.members),
+                    )
                     continue
                 observed_at = utcnow()
                 attack = await self.wars.add_attack(
@@ -178,10 +182,28 @@ class WarSyncService:
                         observed_at=observed_at,
                     )
                 )
-                await self._reconcile_violation(war, attack)
+                await self._reconcile_violation(
+                    war,
+                    attack,
+                    defender_positions=self._defender_positions_from_members(enemy_side.members),
+                )
         return war
 
-    async def _reconcile_violation(self, war: War, attack: Attack) -> None:
+    @staticmethod
+    def _defender_positions_from_members(members) -> list[int]:
+        return sorted({
+            member.map_position
+            for member in members
+            if member.map_position is not None
+        })
+
+    async def _reconcile_violation(
+        self,
+        war: War,
+        attack: Attack,
+        *,
+        defender_positions: list[int] | None = None,
+    ) -> None:
         if war.is_friendly:
             return
 
@@ -197,14 +219,10 @@ class WarSyncService:
             attack_seen_at=attack.observed_at,
             attacker_position=attack.attacker_position,
             defender_position=attack.defender_position,
-            defender_positions=range(
-                1,
-                max(
-                    war.team_size,
-                    attack.attacker_position + 3,
-                    attack.defender_position,
-                )
-                + 1,
+            defender_positions=(
+                defender_positions
+                if defender_positions is not None
+                else range(1, war.team_size + 1)
             ),
             allied_attacks=allied_attacks,
         )
