@@ -39,7 +39,6 @@ class ClanSyncService:
         current_tags = {member.tag for member in members}
 
         for member in members:
-            profile = await self.clash_client.get_player(member.tag)
             existing = await self.players.get_by_tag(member.tag)
             returned_from_archive = await self.session.scalar(
                 select(DepartedPlayerArchive).where(DepartedPlayerArchive.player_tag == member.tag)
@@ -57,7 +56,6 @@ class ClanSyncService:
                 in_clan=True,
             )
             await self.players.open_or_create_membership(player.id, self.config.main_clan_tag, now)
-            await self.donations.record_snapshot(player_tag=member.tag, player_id=player.id, clan_tag=self.config.main_clan_tag, donations=profile.donations, donations_received=profile.donations_received)
 
             if returned_from_archive is not None or was_absent:
                 was_purged = returned_from_archive is not None
@@ -71,6 +69,25 @@ class ClanSyncService:
                     now=now,
                 )
                 logger.info("Return detected for %s", member.tag)
+
+            profile = None
+            try:
+                profile = await self.clash_client.get_player(member.tag)
+            except Exception:
+                logger.warning(
+                    "Failed to load player profile for donation snapshot: %s",
+                    member.tag,
+                    exc_info=True,
+                )
+
+            if profile is not None:
+                await self.donations.record_snapshot(
+                    player_tag=member.tag,
+                    player_id=player.id,
+                    clan_tag=self.config.main_clan_tag,
+                    donations=profile.donations,
+                    donations_received=profile.donations_received,
+                )
 
         active_members = await self.players.active_clan_members(self.config.main_clan_tag)
         for player in active_members:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import select
 
 from app.models import Attack, CycleBoundary, PlayerAccount, TelegramPlayerLink, TelegramUser, Violation, War, WarParticipant
 from app.models.enums import ViolationCode, WarState, WarType
@@ -292,10 +293,29 @@ async def test_violations_ranking_current_cycle_tie_breaker(session, app_yaml_co
     )
     session.add(p4)
     await session.flush()
+    war = await session.scalar(select(War).where(War.war_type == WarType.REGULAR))
+    attack = Attack(
+        war_id=war.id,
+        attacker_player_id=p4.id,
+        attacker_tag="#P10",
+        attacker_name="Charlie",
+        attacker_position=3,
+        attacker_town_hall=16,
+        defender_tag="#E10",
+        defender_name="Enemy10",
+        defender_position=10,
+        defender_town_hall=16,
+        stars=1,
+        destruction=50,
+        attack_order=99,
+        observed_at=datetime(2026, 4, 1, 16, tzinfo=UTC),
+    )
+    session.add(attack)
+    await session.flush()
     session.add(
         Violation(
-            attack_id=None,
-            war_id=None,
+            attack_id=attack.id,
+            war_id=war.id,
             player_tag="#P10",
             code=ViolationCode.TOO_LOW,
             reason_text="tie",
@@ -326,12 +346,22 @@ async def test_violations_ranking_current_cycle_empty(session, app_yaml_config):
     )
     assert text == "✅ За текущий цикл нарушений пока нет."
 
+
+
+@pytest.mark.asyncio
+async def test_player_stats_returns_zero_place_when_contribution_unavailable(session, app_yaml_config, monkeypatch):
+    await seed_stats_data(session)
+
     async def fail_ranking(*_args, **_kwargs):
         raise ContributionDataUnavailableError("no data")
 
     monkeypatch.setattr("app.services.dev_contribution.DevContributionService.build_contribution_ranking", fail_ranking)
 
-    stats = await StatsService(session, app_yaml_config).player_stats(datetime(2026, 4, 1, 0, tzinfo=UTC), datetime(2026, 4, 2, 23, tzinfo=UTC), "#P2")
+    stats = await StatsService(session, app_yaml_config).player_stats(
+        datetime(2026, 4, 1, 0, tzinfo=UTC),
+        datetime(2026, 4, 2, 23, tzinfo=UTC),
+        "#P2",
+    )
     assert stats.place == 0
 
 
@@ -349,7 +379,7 @@ async def test_build_player_violations_report_empty(session, app_yaml_config, mo
         "#P1",
         "Lester",
     )
-    assert text == "✅ У игрока Lester нет нарушений за текущий цикл."
+    assert text == "✅ У игрока Lester нет нарушений за текущий цикл.\nАктивный счетчик нарушений: 0"
 
 
 @pytest.mark.asyncio

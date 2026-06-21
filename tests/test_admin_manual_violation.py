@@ -16,6 +16,7 @@ from app.models import Attack, PlayerAccount, Violation, War
 from app.models.enums import ViolationCode, WarType
 from app.services.dev_contribution import DevContributionService
 from app.services.manual_violation import ManualViolationService
+from app.services.period import PeriodService
 from app.services.war_sync import WarSyncService
 from tests.fakes import FakeMessage, FakeState, FakeSender
 
@@ -29,8 +30,13 @@ async def test_manual_flag_button_visible_for_admin_only():
 
 
 @pytest.mark.asyncio
-async def test_manual_violation_flow(session, app_context):
+async def test_manual_violation_flow(session, app_context, monkeypatch):
     now = datetime(2026, 5, 20, 10, 0, tzinfo=UTC)
+
+    async def fake_current_cycle(self):
+        return type("Period", (), {"start": now - timedelta(days=1), "end": now + timedelta(days=1)})()
+
+    monkeypatch.setattr(PeriodService, "current_cycle", fake_current_cycle)
     session.add(PlayerAccount(player_tag="#P2", name="Alpha", town_hall=16, current_clan_tag="#CLAN", current_clan_name="T", current_clan_rank=1, current_in_clan=True, last_seen_in_clan_at=now, first_absent_at=None, created_at=now, updated_at=now))
     war = War(war_uid="w1", clan_tag="#CLAN", clan_name="T", opponent_tag="#E", opponent_name="E", war_type=WarType.REGULAR, state="in_war", league_group_id=None, cwl_season=None, round_index=None, team_size=15, is_friendly=False, start_time=now - timedelta(hours=1), end_time=now + timedelta(hours=5), preparation_start_time=now - timedelta(hours=23), source_payload={})
     session.add(war)
@@ -116,8 +122,18 @@ async def test_claimed_target_contribution_is_minus_50_and_keeps_baseline(sessio
     session.add(Violation(attack_id=a1.id, war_id=war.id, player_tag="#P2", code=ViolationCode.CLAIMED_TARGET, reason_text="Атака по чужому флажку", player_position=20, target_position=17, detected_at=now, is_manual=True))
     await session.commit()
 
-    ranking = await DevContributionService(session, app_yaml_config).build_contribution_ranking(type("P", (), {"start": now - timedelta(days=1), "end": now + timedelta(days=1)})())
-    assert ranking[0].score == -42.0
+    period = type("P", (), {"start": now - timedelta(days=1), "end": now + timedelta(days=1)})()
+    service = DevContributionService(session, app_yaml_config)
+    calculation = await service.build_contribution_calculation(period)
+    attack_components = [component for component in calculation.components_by_tag["#P2"] if component.kind == "attack"]
+
+    assert attack_components[0].violation_code == ViolationCode.CLAIMED_TARGET
+    assert attack_components[0].score_delta == -50.0
+    assert attack_components[1].score_delta == 15.0
+    assert calculation.score_for("#P2") == -35.0
+
+    ranking = await service.build_contribution_ranking(period)
+    assert ranking[0].score == -35.0
 
 
 @pytest.mark.asyncio
