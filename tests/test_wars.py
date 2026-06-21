@@ -167,7 +167,7 @@ async def test_violation_when_attacking_above_self(session, fake_clash_client, a
     assert violation.code.value == "above_self"
     assert "выше разрешенной позиции" in violation.reason_text
     assert attack is not None
-    assert attack.violation_code == ViolationCode.ABOVE_SELF
+    assert violation.attack_id == attack.id
 
 
 @pytest.mark.asyncio
@@ -183,9 +183,8 @@ async def test_attack_one_position_above_self_is_allowed(session, fake_clash_cli
     await WarSyncService(session, fake_clash_client, app_yaml_config, notifier).sync_all()
 
     attack = await session.scalar(select(Attack))
-    assert await session.scalar(select(func.count(Violation.id))) == 0
     assert attack is not None
-    assert attack.violation_code is None
+    assert await session.scalar(select(func.count(Violation.id)).where(Violation.attack_id == attack.id)) == 0
 
 
 @pytest.mark.asyncio
