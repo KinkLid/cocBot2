@@ -172,3 +172,36 @@ async def test_main_run_calls_startup_sync(monkeypatch):
         await main_module.run()
 
     startup_run.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_startup_sync_saves_full_roster_when_return_notification_fails(session, app_context, fake_clash_client):
+    class FailingSender:
+        async def __call__(self, chat_id: int, text: str) -> None:
+            raise RuntimeError("Telegram send failed")
+
+    fake_clash_client.members = [make_clan_member(f"#P{i:02d}", f"Player{i:02d}", i) for i in range(1, 46)]
+    fake_clash_client.clan["members"] = 45
+    service = StartupSyncService(app_context, FakeSender())
+    await service.run()
+
+    player = await session.scalar(select(PlayerAccount).where(PlayerAccount.player_tag == "#P30"))
+    assert player is not None
+    player.current_in_clan = False
+    player.current_clan_tag = None
+    await session.commit()
+
+    api_members = [make_clan_member(f"#P{i:02d}", f"Player{i:02d}", i) for i in range(20, 70)]
+    api_tags = {member.tag for member in api_members}
+    fake_clash_client.members = api_members
+    fake_clash_client.clan["members"] = 50
+
+    report = await StartupSyncService(app_context, FailingSender()).run()
+
+    active_players = list((await session.execute(select(PlayerAccount).where(PlayerAccount.current_in_clan.is_(True)))).scalars())
+    assert report.clan_sync_ok is True
+    assert report.members_processed == 50
+    assert {player.player_tag for player in active_players} == api_tags
+    departed = await session.scalar(select(PlayerAccount).where(PlayerAccount.player_tag == "#P01"))
+    assert departed is not None
+    assert departed.current_in_clan is False

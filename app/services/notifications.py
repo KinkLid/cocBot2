@@ -28,6 +28,16 @@ class AdminNotifier:
         for admin_id in self.config.admin_telegram_ids:
             if await self.repo.was_sent(admin_id, event_key):
                 continue
-            await self.sender(admin_id, text)
+            try:
+                await self.sender(admin_id, text)
+            except Exception:
+                logger.warning(
+                    "Failed to send admin notification: type=%s admin_id=%s event_key=%s",
+                    event_type,
+                    admin_id,
+                    event_key,
+                    exc_info=True,
+                )
+                continue
             await self.repo.mark_sent(admin_id, event_key, event_type, now)
             logger.info("Admin notification sent: %s -> %s", event_type, admin_id)
