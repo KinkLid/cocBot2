@@ -154,12 +154,38 @@ async def test_violation_when_attacking_above_self(session, fake_clash_client, a
 
     start = datetime(2026, 4, 1, 10, 0, tzinfo=UTC)
     monkeypatch.setattr("app.services.war_sync.utcnow", lambda: start + timedelta(hours=2))
+    fake_clash_client.current_war = make_regular_war(start=start, attacker_position=12, defender_position=10)
+
+    await WarSyncService(session, fake_clash_client, app_yaml_config, notifier).sync_all()
+
+    violation_count = await session.scalar(select(func.count(Violation.id)))
+    violation = await session.scalar(select(Violation))
+    attack = await session.scalar(select(Attack))
+    assert violation_count == 1
+    assert violation is not None
+    assert violation.code == ViolationCode.ABOVE_SELF
+    assert violation.code.value == "above_self"
+    assert "выше разрешенной позиции" in violation.reason_text
+    assert attack is not None
+    assert attack.violation_code == ViolationCode.ABOVE_SELF
+
+
+@pytest.mark.asyncio
+async def test_attack_one_position_above_self_is_allowed(session, fake_clash_client, app_yaml_config, monkeypatch):
+    fake_clash_client.members = [make_clan_member("#P2", "Alpha", 1)]
+    notifier = AdminNotifier(session, app_yaml_config, FakeSender())
+    await ClanSyncService(session, fake_clash_client, app_yaml_config, notifier).sync_members()
+
+    start = datetime(2026, 4, 1, 10, 0, tzinfo=UTC)
+    monkeypatch.setattr("app.services.war_sync.utcnow", lambda: start + timedelta(hours=2))
     fake_clash_client.current_war = make_regular_war(start=start, attacker_position=12, defender_position=11)
 
     await WarSyncService(session, fake_clash_client, app_yaml_config, notifier).sync_all()
 
-    violation = await session.scalar(select(Violation))
-    assert violation.code.value == "above_self"
+    attack = await session.scalar(select(Attack))
+    assert await session.scalar(select(func.count(Violation.id))) == 0
+    assert attack is not None
+    assert attack.violation_code is None
 
 
 @pytest.mark.asyncio

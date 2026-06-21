@@ -12,6 +12,7 @@ from tests.fakes import FakeMessage
 
 
 CAPITAL_NO_DATA_TEXT = "⚠️ По столице за текущий цикл пока нет данных."
+DEV_CAPITAL_NO_DATA_TEXT = "⚠️ По клановой столице за текущий цикл пока нет данных."
 
 
 @pytest.mark.asyncio
@@ -39,7 +40,7 @@ async def test_dev_capital_button_reads_current_cycle_without_live_sync(app_cont
     )
     message = FakeMessage(text="🧪 Dev вклад в столицу", user_id=1)
     await dev_capital(message, app_context)
-    assert message.answer.await_args.args[0] == CAPITAL_NO_DATA_TEXT
+    assert message.answer.await_args.args[0] == DEV_CAPITAL_NO_DATA_TEXT
 
 
 @pytest.mark.asyncio
