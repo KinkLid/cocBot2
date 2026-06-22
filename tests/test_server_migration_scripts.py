@@ -46,15 +46,15 @@ def test_migration_script_required_order_and_safety() -> None:
     c = read("scripts/migrate_to_new_server.sh")
     assert "set -x" not in c
     assert "flock -n 9" in c and "/tmp/cocbot-server-migration.lock" in c
-    assert c.index("--online-only") < c.index("systemctl stop \"${SERVICE_NAME}\"")
-    assert c.index("systemctl stop \"${SERVICE_NAME}\"") < c.index("scripts/backup_sqlite.py")
-    assert "sha256sum '${REMOTE_STAGE}/clanbot.sqlite3.incoming'" in c
+    assert c.index("--online-only") < c.index("local_root systemctl stop \"${SERVICE_NAME}\"")
+    assert c.index("local_root systemctl stop \"${SERVICE_NAME}\"") < c.index("scripts/backup_sqlite.py")
+    assert "sha256sum '${REMOTE_DIR}/data/clanbot.sqlite3.incoming'" in c
     assert "PRAGMA integrity_check" in c
     assert "alembic upgrade head" in c and "alembic check" in c
     assert c.index("scripts/check_server_health.py --project-dir '${REMOTE_DIR}' --offline") < c.index("systemctl enable ${SERVICE_NAME}")
     assert c.index("MIGRATION_SUCCEEDED=1") < c.index("Перенос успешно завершён")
     assert "systemctl disable \"${SERVICE_NAME}\"" in c
-    assert "trap auto_rollback ERR INT TERM" in c
+    assert "trap 'on_error $LINENO $?' ERR" in c
 
 
 def test_token_handling() -> None:
@@ -162,10 +162,10 @@ def test_rollback_script_order() -> None:
     c = read("scripts/rollback_server_migration.sh")
     assert ".migration/last_server_migration.json" in c
     assert c.index("systemctl stop ${SERVICE_NAME}") < c.index("backup_sqlite.py")
-    assert c.index("cp -a \"${LOCAL_DB}\"") < c.index("mv \"${LOCAL_DB}.incoming\"")
-    assert c.index("sha256_file") < c.index("mv \"${LOCAL_DB}.incoming\"")
-    assert c.index("PRAGMA integrity_check") < c.index("mv \"${LOCAL_DB}.incoming\"")
-    assert c.index("alembic upgrade head") < c.index("systemctl enable \"${SERVICE_NAME}\"")
+    assert c.index("cp -a \"${LOCAL_DB}\"") < c.index("mv -f \"${LOCAL_INCOMING}\"")
+    assert c.index("sha256_file") < c.index("mv -f \"${LOCAL_INCOMING}\"")
+    assert c.index("PRAGMA integrity_check") < c.index("mv -f \"${LOCAL_INCOMING}\"")
+    assert c.index("alembic upgrade head") < c.index("local_root systemctl enable \"${SERVICE_NAME}\"")
     assert "rm -rf" not in c
 
 
@@ -174,3 +174,232 @@ def test_dry_run_does_not_mutate() -> None:
     dry = c[c.index('if [[ "${DRY_RUN}" == "1" ]]; then'): c.index('TMP_ENV="$(mktemp)"')]
     assert "systemctl stop" not in dry and "restart" not in dry and "rsync" not in dry
     assert "last_server_migration.json" not in dry
+
+# --- fake integration tests for server migration scripts ---
+
+def make_fake_bin(tmp_path: Path, *, remote_uid: str = "0", sudo_ok: bool = True, fail_remote_active: bool = False, fail_scp: bool = False, local_active_first: bool = False) -> tuple[Path, Path]:
+    fake = tmp_path / "fake_bin"; fake.mkdir()
+    log = tmp_path / "calls.log"
+    state = tmp_path / "state"; state.mkdir()
+    (state / "local_active_first").write_text("1" if local_active_first else "0")
+    common = f"LOG={str(log)!r}\nSTATE={str(state)!r}\n"
+    def write(name: str, body: str):
+        p = fake / name
+        p.write_text("#!/usr/bin/env bash\nset -u\n" + common + body, encoding="utf-8")
+        p.chmod(0o755)
+    write("ssh", f'''
+echo "ssh $*" >> "$LOG"
+target="$1"; shift || true
+if [[ "${{1:-}}" == "sudo" && "${{2:-}}" == "-n" ]]; then shift 2; fi
+cmd="$*"
+case "$cmd" in
+  "id -u") echo "{remote_uid}"; exit 0;;
+  "id -un") echo "deploy"; exit 0;;
+  "id -gn") echo "deploy"; exit 0;;
+  "sudo -n true") {'exit 0' if sudo_ok else 'exit 1'};;
+  "curl -4 -fsS https://api.ipify.org") echo "203.0.113.10"; exit 0;;
+  *"check_server_health.py"*"--online-only"*) exit 0;;
+  *"check_server_health.py"*"--offline"*) echo "$cmd" >> "$LOG"; exit 0;;
+  *"systemctl is-active cocbot"*) {'echo inactive; exit 0' if fail_remote_active else 'echo active; exit 0'};;
+  *"journalctl"*) exit 0;;
+esac
+if [[ "$cmd" == *"bash -se"* ]]; then
+  input=$(cat)
+  printf '%s\n' "$input" | sed 's/^/ssh-stdin /' >> "$LOG"
+  if [[ "$input" == *"alembic upgrade head"* && -n "${{FAIL_AFTER_STOP:-}}" ]]; then exit 1; fi
+  exit 0
+fi
+exit 0
+''')
+    write("scp", f'''
+echo "scp $*" >> "$LOG"
+if [[ -n "${{FAIL_SCP:-}}" ]]; then exit 1; fi
+last="${{@: -1}}"
+if [[ "$last" == */remote-manifest.json ]]; then mkdir -p "$(dirname "$last")"; echo '{{"path":"/tmp/remote.sqlite3","sha256":"abc","active_players":49}}' > "$last"; fi
+if [[ "$last" == */remote-current.sqlite3 ]]; then mkdir -p "$(dirname "$last")"; printf remote > "$last"; fi
+exit 0
+''')
+    write("rsync", 'echo "rsync $*" >> "$LOG"\nexit 0\n')
+    write("sudo", f'''
+echo "sudo $*" >> "$LOG"
+if [[ "${{1:-}} ${{2:-}}" == "-n true" ]]; then {'exit 0' if sudo_ok else 'exit 1'}; fi
+if [[ "${{1:-}}" == "-n" ]]; then shift; fi
+"$@"
+''')
+    write("systemctl", '''
+echo "systemctl $*" >> "$LOG"
+case "$1" in
+  status) exit 0;;
+  is-enabled) echo enabled; exit 0;;
+  is-active)
+    if [[ -f "$STATE/local_stopped" ]]; then echo inactive; elif [[ -f "$STATE/local_running" ]]; then echo active; else
+      if [[ "$(cat "$STATE/local_active_first")" == "1" ]]; then echo active; echo 0 > "$STATE/local_active_first"; else echo inactive; fi
+    fi; exit 0;;
+  stop) touch "$STATE/local_stopped"; rm -f "$STATE/local_running"; exit 0;;
+  start) rm -f "$STATE/local_stopped"; touch "$STATE/local_running"; exit 0;;
+  enable|disable|restart|daemon-reload) exit 0;;
+esac
+exit 0
+''')
+    write("journalctl", 'echo "journalctl $*" >> "$LOG"\nexit 0\n')
+    write("curl", 'echo "curl $*" >> "$LOG"\necho 203.0.113.10\n')
+    write("pgrep", 'echo "pgrep $*" >> "$LOG"\nexit 1\n')
+    write("sha256sum", 'echo "sha256sum $*" >> "$LOG"\necho "abc  $1"\n')
+    write("flock", 'echo "flock $*" >> "$LOG"\nexit 0\n')
+    write("sqlite3", 'echo "sqlite3 $*" >> "$LOG"\necho ok\n')
+    write("sleep", 'echo "sleep $*" >> "$LOG"\nexit 0\n')
+    write("python3.12", r'''
+echo "python3.12 $*" >> "$LOG"
+if [[ "$*" == *"scripts/backup_sqlite.py"* ]]; then
+  out=""
+  prev=""
+  for a in "$@"; do [[ "$prev" == "--output" ]] && out="$a"; prev="$a"; done
+  [[ -n "$out" ]] && mkdir -p "$(dirname "$out")" && printf backup > "$out"
+  echo '{"path":"'"$out"'","sha256":"abc","active_players":50,"integrity":"ok"}'
+  exit 0
+fi
+if [[ "$1" == "-" ]]; then
+  script=$(cat)
+  if [[ "$script" == *"make_url"* ]]; then echo "''' + str(REPO_ROOT) + r'''/data/clanbot.sqlite3"; exit 0; fi
+  /usr/bin/python3 "$@" <<< "$script"; exit $?
+fi
+/usr/bin/python3 "$@"
+''')
+    return fake, log
+
+@pytest.fixture()
+def repo_env_files():
+    env = REPO_ROOT / ".env"; cfg = REPO_ROOT / "config.yaml"; dbdir = REPO_ROOT / "data"; db = dbdir / "clanbot.sqlite3"; mig = REPO_ROOT / ".migration/last_server_migration.json"
+    old_env = env.read_bytes() if env.exists() else None
+    old_cfg = cfg.read_bytes() if cfg.exists() else None
+    old_db = db.read_bytes() if db.exists() else None
+    old_mig = mig.read_bytes() if mig.exists() else None
+    dbdir.mkdir(exist_ok=True)
+    env.write_text("BOT_TOKEN=t\nCLASH_API_TOKEN=c\nDATABASE_URL=sqlite+aiosqlite:///./data/clanbot.sqlite3\nCONFIG_PATH=./config.yaml\n", encoding="utf-8")
+    cfg.write_text("main_clan_tag: '#ABC'\n", encoding="utf-8")
+    db.write_bytes(b"db")
+    venv_py = REPO_ROOT / ".venv/bin/python"
+    old_venv_py = venv_py.read_bytes() if venv_py.exists() else None
+    venv_py.parent.mkdir(parents=True, exist_ok=True)
+    venv_py.write_text("#!/usr/bin/env bash\necho \"venv-python $*\" >> \"$LOG\"\nif [[ \"$*\" == *check_server_health.py* ]]; then echo \"$*\" >> \"$LOG\"; fi\nif [[ \"$*\" == *alembic*check* ]]; then echo No new upgrade operations detected; fi\nexit 0\n", encoding="utf-8")
+    venv_py.chmod(0o755)
+    mig.unlink(missing_ok=True)
+    yield
+    if old_env is None: env.unlink(missing_ok=True)
+    else: env.write_bytes(old_env)
+    if old_cfg is None: cfg.unlink(missing_ok=True)
+    else: cfg.write_bytes(old_cfg)
+    if old_db is None: db.unlink(missing_ok=True)
+    else: db.write_bytes(old_db)
+    if old_venv_py is None: venv_py.unlink(missing_ok=True)
+    else: venv_py.write_bytes(old_venv_py)
+    if old_mig is None: mig.unlink(missing_ok=True)
+    else:
+        mig.parent.mkdir(exist_ok=True); mig.write_bytes(old_mig)
+
+
+def fake_env(fake: Path, extra: dict[str, str] | None = None) -> dict[str, str]:
+    env = {"PATH": f"{fake}:{os.environ['PATH']}", "LOG": str(fake.parent / "calls.log"), "COCBOT_MIGRATION_ASSUME_YES": "1", "COCBOT_NEW_CLASH_API_TOKEN": "token"}
+    if extra: env.update(extra)
+    return env
+
+
+def test_real_dry_run_with_fake_commands(repo_env_files, tmp_path: Path) -> None:
+    fake, log = make_fake_bin(tmp_path)
+    res = run(["bash", str(SCRIPTS / "migrate_to_new_server.sh"), "--dry-run", "testuser@example", "/opt/cocbot"], env=fake_env(fake))
+    calls = log.read_text(encoding="utf-8")
+    assert res.returncode == 0, res.stderr
+    assert "KeyError" not in res.stderr
+    assert "Dry-run завершён. Изменения не применялись." in res.stdout
+    assert "scp " not in calls and "rsync " not in calls and "apt-get" not in calls
+    assert "systemctl stop" not in calls and "systemctl start" not in calls
+    assert not (REPO_ROOT / ".migration/last_server_migration.json").exists()
+
+
+def test_project_root_from_script_path_in_other_cwd(repo_env_files, tmp_path: Path) -> None:
+    fake, _log = make_fake_bin(tmp_path)
+    res = run(["bash", str(SCRIPTS / "migrate_to_new_server.sh"), "--dry-run", "testuser@example", "/opt/cocbot"], cwd=tmp_path, env=fake_env(fake))
+    assert res.returncode == 0, res.stderr
+    assert "PROJECT_ROOT" not in res.stderr
+    assert "Dry-run завершён" in res.stdout
+
+
+def test_remote_passwordless_sudo_staging(repo_env_files, tmp_path: Path) -> None:
+    fake, log = make_fake_bin(tmp_path, remote_uid="1000", sudo_ok=True)
+    res = run(["bash", str(SCRIPTS / "migrate_to_new_server.sh"), "testuser@example", "/opt/cocbot"], env=fake_env(fake, {"FAIL_AFTER_STOP":"1"}))
+    calls = log.read_text(encoding="utf-8")
+    assert "chown -R 'deploy:deploy'" in calls
+    assert "rsync " in calls and "scp " in calls
+
+
+def test_remote_sudo_required_before_local_stop(repo_env_files, tmp_path: Path) -> None:
+    fake, log = make_fake_bin(tmp_path, remote_uid="1000", sudo_ok=False)
+    res = run(["bash", str(SCRIPTS / "migrate_to_new_server.sh"), "testuser@example", "/opt/cocbot"], env=fake_env(fake))
+    calls = log.read_text(encoding="utf-8")
+    assert res.returncode != 0
+    assert "Для автоматического переноса нужен root SSH" in res.stderr
+    assert "systemctl stop cocbot" not in calls
+
+
+def test_local_sudo_required_in_preflight(repo_env_files, tmp_path: Path) -> None:
+    fake, log = make_fake_bin(tmp_path, sudo_ok=False)
+    res = run(["bash", str(SCRIPTS / "migrate_to_new_server.sh"), "--dry-run", "testuser@example", "/opt/cocbot"], env=fake_env(fake, {"COCBOT_TEST_LOCAL_UID":"1000"}))
+    calls = log.read_text(encoding="utf-8") if log.exists() else ""
+    assert res.returncode != 0
+    assert "Запустите скрипт от root" in res.stderr
+    assert "ssh " not in calls and "systemctl stop cocbot" not in calls
+
+
+def test_auto_rollback_after_old_service_stopped(repo_env_files, tmp_path: Path) -> None:
+    fake, log = make_fake_bin(tmp_path)
+    res = run(["bash", str(SCRIPTS / "migrate_to_new_server.sh"), "testuser@example", "/opt/cocbot"], env=fake_env(fake, {"FAIL_AFTER_STOP":"1"}))
+    calls = log.read_text(encoding="utf-8")
+    assert res.returncode != 0
+    assert "ssh-stdin systemctl stop cocbot" in calls
+    assert "ssh-stdin systemctl disable cocbot" in calls
+    assert "systemctl enable cocbot" in calls
+    assert "systemctl start cocbot" in calls
+    assert "systemctl is-active cocbot" in calls
+
+
+def write_state(active: int = 50):
+    d = REPO_ROOT / ".migration"; d.mkdir(exist_ok=True)
+    (d / "last_server_migration.json").write_text(json.dumps({
+        "migration_id":"mid", "remote_target":"testuser@example", "remote_dir":"/opt/cocbot",
+        "local_db_path": str(REPO_ROOT / "data/clanbot.sqlite3"), "git_commit":"no-git",
+        "active_player_count": active, "local_backup_path":"/tmp/orig.sqlite3",
+        "successful_start_timestamp":"2026-01-01T00:00:00+00:00", "sha256":"abc"
+    }), encoding="utf-8")
+
+
+def test_manual_rollback_failure_restarts_remote(repo_env_files, tmp_path: Path) -> None:
+    write_state()
+    fake, log = make_fake_bin(tmp_path)
+    res = run(["bash", str(SCRIPTS / "rollback_server_migration.sh")], env=fake_env(fake, {"COCBOT_ROLLBACK_ASSUME_YES":"1", "FAIL_SCP":"1"}))
+    calls = log.read_text(encoding="utf-8")
+    assert res.returncode != 0
+    assert "ssh-stdin systemctl stop cocbot" in calls
+    assert "ssh testuser@example systemctl start cocbot" in calls
+    assert "ssh testuser@example systemctl is-active cocbot" in calls
+    assert "mv -f" not in calls
+    assert "systemctl start cocbot" not in [l for l in calls.splitlines() if not l.startswith("ssh")]
+
+
+def test_rollback_uses_current_remote_active_players(repo_env_files, tmp_path: Path) -> None:
+    write_state(active=50)
+    fake, log = make_fake_bin(tmp_path)
+    res = run(["bash", str(SCRIPTS / "rollback_server_migration.sh")], env=fake_env(fake, {"COCBOT_ROLLBACK_ASSUME_YES":"1"}))
+    calls = log.read_text(encoding="utf-8")
+    assert "--expected-active-players 49" in calls
+    assert "--expected-active-players 50" not in calls
+
+
+def test_rollback_stops_local_service_before_db_replace(repo_env_files, tmp_path: Path) -> None:
+    write_state(active=50)
+    fake, log = make_fake_bin(tmp_path, local_active_first=True)
+    res = run(["bash", str(SCRIPTS / "rollback_server_migration.sh")], env=fake_env(fake, {"COCBOT_ROLLBACK_ASSUME_YES":"1"}))
+    calls = log.read_text(encoding="utf-8").splitlines()
+    joined = "\n".join(calls)
+    assert res.returncode == 0, res.stderr
+    assert joined.index("systemctl stop cocbot") < joined.index("systemctl is-active cocbot", joined.index("systemctl stop cocbot"))
+    assert joined.index("pgrep -af python.*-m app.main") < joined.index("python3.12 -c import sys; raise SystemExit")
