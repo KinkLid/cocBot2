@@ -74,6 +74,30 @@ remote_root() {
     ssh "${SSH_TARGET}" sudo -n "$@"
   fi
 }
+remote_as_service_user() {
+  local command_text="$1"
+
+  remote_root runuser \
+    -u "${REMOTE_SERVICE_USER}" \
+    -- \
+    bash -lc "${command_text}"
+}
+check_remote_fatal_logs() {
+  local remote_logs
+  local FATAL_LOG_PATTERN='Unauthorized|Conflict: terminated by other getUpdates request|Invalid authorization|database is locked|Startup clan sync failed|Traceback'
+
+  remote_logs="$(
+    remote_root journalctl \
+      -u "${SERVICE_NAME}" \
+      -n 200 \
+      --no-pager
+  )"
+
+  if printf '%s\n' "${remote_logs}" | grep -E -q "${FATAL_LOG_PATTERN}"; then
+    printf '%s\n' "${remote_logs}" >&2
+    err "В журналах нового сервера найдена фатальная ошибка"
+  fi
+}
 
 cleanup() {
   local code=$?
@@ -226,7 +250,7 @@ bash '${REMOTE_DIR}/scripts/install_on_server.sh' --prepare-only --service-user 
 state="\$(systemctl is-active ${SERVICE_NAME} || true)"; if [ "\$state" = active ]; then echo 'WARNING: remote service was active; stopping'; systemctl stop ${SERVICE_NAME}; fi
 EOF_REMOTE_INSTALL
 
-if ! remote_run "cd '${REMOTE_DIR}' && ./.venv/bin/python scripts/check_server_health.py --project-dir '${REMOTE_DIR}' --online-only"; then
+if ! remote_as_service_user "cd '${REMOTE_DIR}' && ./.venv/bin/python scripts/check_server_health.py --project-dir '${REMOTE_DIR}' --online-only"; then
   [[ -n "${REMOTE_IP}" ]] && warn "Публичный IPv4 нового сервера: ${REMOTE_IP}"
   err "Online health check failed. Нужно создать Clash API token для IP нового сервера."
 fi
@@ -282,32 +306,20 @@ text=open(sys.argv[1],encoding='utf-8',errors='replace').read()
 if 'No new upgrade operations detected' not in text:
     raise SystemExit(1)
 PY_REMOTE
-./.venv/bin/python scripts/check_server_health.py --project-dir '${REMOTE_DIR}' --offline --expected-active-players '${ACTIVE_PLAYERS}'
+EOF_REMOTE_DB
+remote_as_service_user "cd '${REMOTE_DIR}' && ./.venv/bin/python scripts/check_server_health.py --project-dir '${REMOTE_DIR}' --offline --expected-active-players '${ACTIVE_PLAYERS}'"
+remote_root bash -se <<EOF_REMOTE_START
+set -Eeuo pipefail
 systemctl enable ${SERVICE_NAME}
 systemctl restart ${SERVICE_NAME}
-EOF_REMOTE_DB
+EOF_REMOTE_START
 REMOTE_SERVICE_STARTED=1
-for _ in {1..10}; do [[ "$(remote_run "systemctl is-active ${SERVICE_NAME}" || true)" == active ]] && break; sleep 3; done
-[[ "$(remote_run "systemctl is-active ${SERVICE_NAME}" || true)" == active ]] || { remote_run "journalctl -u ${SERVICE_NAME} -n 100 --no-pager" || true; err "Новый сервис не стал active"; }
-check_logs='Unauthorized|Conflict: terminated by other getUpdates request|Invalid authorization|database is locked|Startup clan sync failed|Traceback'
-remote_run "journalctl -u ${SERVICE_NAME} -n 200 --no-pager" | tee "${FINAL_BACKUP_DIR}/remote-journal-after-start.log"
-if remote_run "journalctl -u ${SERVICE_NAME} -n 200 --no-pager" | python3.12 - "$check_logs" <<'PY'
-import re, sys
-pattern=sys.argv[1]
-text=sys.stdin.read()
-raise SystemExit(0 if re.search(pattern, text) else 1)
-PY
-then err "В журналах нового сервера найдена фатальная ошибка"; fi
+for _ in {1..10}; do [[ "$(remote_root systemctl is-active "${SERVICE_NAME}" || true)" == active ]] && break; sleep 3; done
+[[ "$(remote_root systemctl is-active "${SERVICE_NAME}" || true)" == active ]] || { remote_root journalctl -u "${SERVICE_NAME}" -n 100 --no-pager; err "Новый сервис не стал active"; }
 sleep 15
-[[ "$(remote_run "systemctl is-active ${SERVICE_NAME}" || true)" == active ]] || err "Новый сервис перестал быть active"
-remote_run "cd '${REMOTE_DIR}' && ./.venv/bin/python scripts/check_server_health.py --project-dir '${REMOTE_DIR}' --offline --expected-active-players '${ACTIVE_PLAYERS}'"
-if remote_run "journalctl -u ${SERVICE_NAME} -n 200 --no-pager" | python3.12 - "$check_logs" <<'PY'
-import re, sys
-pattern=sys.argv[1]
-text=sys.stdin.read()
-raise SystemExit(0 if re.search(pattern, text) else 1)
-PY
-then err "В повторной проверке журналов найдена фатальная ошибка"; fi
+[[ "$(remote_root systemctl is-active "${SERVICE_NAME}" || true)" == active ]] || err "Новый сервис перестал быть active"
+remote_as_service_user "cd '${REMOTE_DIR}' && ./.venv/bin/python scripts/check_server_health.py --project-dir '${REMOTE_DIR}' --offline --expected-active-players '${ACTIVE_PLAYERS}'"
+check_remote_fatal_logs
 
 local_root systemctl disable "${SERVICE_NAME}"
 remote_root bash -se <<EOF_REMOTE_CLEAN

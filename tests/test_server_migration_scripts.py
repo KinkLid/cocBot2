@@ -198,10 +198,12 @@ case "$cmd" in
   "id -gn") echo "deploy"; exit 0;;
   "sudo -n true") {'exit 0' if sudo_ok else 'exit 1'};;
   "curl -4 -fsS https://api.ipify.org") echo "203.0.113.10"; exit 0;;
-  *"check_server_health.py"*"--online-only"*) exit 0;;
-  *"check_server_health.py"*"--offline"*) echo "$cmd" >> "$LOG"; exit 0;;
+  *"check_server_health.py"*"--online-only"*) if [[ -n "${{REQUIRE_RUNUSER_HEALTH:-}}" && "$cmd" != *"runuser -u cocbot -- bash -lc"* ]]; then echo env denied >&2; exit 13; fi; exit 0;;
+  *"check_server_health.py"*"--offline"*) echo "$cmd" >> "$LOG"; if [[ -n "${{REQUIRE_RUNUSER_HEALTH:-}}" && "$cmd" != *"runuser -u cocbot -- bash -lc"* ]]; then echo env denied >&2; exit 13; fi; exit 0;;
   *"systemctl is-active cocbot"*) {'echo inactive; exit 0' if fail_remote_active else 'echo active; exit 0'};;
-  *"journalctl"*) exit 0;;
+  *"journalctl"*) if [[ -n "${{REMOTE_JOURNAL_FAIL:-}}" ]]; then echo permission denied >&2; exit 7; fi; printf '%s\n' "${{REMOTE_JOURNAL_TEXT:-}}"; exit 0;;
+  chown*) touch "$STATE/remote_backup_chowned"; exit 0;;
+  chmod*) touch "$STATE/remote_backup_chmodded"; exit 0;;
 esac
 if [[ "$cmd" == *"bash -se"* ]]; then
   input=$(cat)
@@ -215,6 +217,9 @@ exit 0
 echo "scp $*" >> "$LOG"
 if [[ -n "${{FAIL_SCP:-}}" ]]; then exit 1; fi
 last="${{@: -1}}"
+if [[ -n "${{REQUIRE_BACKUP_PERMS:-}}" && "$*" == *testuser@example:* ]]; then
+  [[ -f "$STATE/remote_backup_chowned" && -f "$STATE/remote_backup_chmodded" ]] || exit 77
+fi
 if [[ "$last" == */remote-manifest.json ]]; then mkdir -p "$(dirname "$last")"; echo '{{"path":"/tmp/remote.sqlite3","sha256":"abc","active_players":49}}' > "$last"; fi
 if [[ "$last" == */remote-current.sqlite3 ]]; then mkdir -p "$(dirname "$last")"; printf remote > "$last"; fi
 exit 0
@@ -236,7 +241,7 @@ case "$1" in
       if [[ "$(cat "$STATE/local_active_first")" == "1" ]]; then echo active; echo 0 > "$STATE/local_active_first"; else echo inactive; fi
     fi; exit 0;;
   stop) touch "$STATE/local_stopped"; rm -f "$STATE/local_running"; exit 0;;
-  start) rm -f "$STATE/local_stopped"; touch "$STATE/local_running"; exit 0;;
+  start) rm -f "$STATE/local_stopped"; if [[ -z "${LOCAL_START_INACTIVE:-}" ]]; then touch "$STATE/local_running"; fi; exit 0;;
   enable|disable|restart|daemon-reload) exit 0;;
 esac
 exit 0
@@ -371,6 +376,92 @@ def write_state(active: int = 50):
         "successful_start_timestamp":"2026-01-01T00:00:00+00:00", "sha256":"abc"
     }), encoding="utf-8")
 
+
+
+def run_migration_with_journal(tmp_path: Path, text: str = "", extra: dict[str, str] | None = None):
+    fake, log = make_fake_bin(tmp_path, remote_uid="1000", sudo_ok=True)
+    env = fake_env(fake, {"REMOTE_JOURNAL_TEXT": text, **(extra or {})})
+    res = run(["bash", str(SCRIPTS / "migrate_to_new_server.sh"), "testuser@example", "/opt/cocbot"], env=env)
+    return res, log.read_text(encoding="utf-8")
+
+
+def test_migration_traceback_in_remote_journal_triggers_rollback(repo_env_files, tmp_path: Path) -> None:
+    res, calls = run_migration_with_journal(tmp_path, "Traceback: simulated fatal error")
+    assert res.returncode != 0
+    assert "Перенос успешно завершён" not in res.stdout
+    assert not (REPO_ROOT / ".migration/last_server_migration.json").exists()
+    assert "systemctl disable cocbot" not in calls.split("ssh-stdin systemctl stop cocbot")[-2].splitlines()[0:1]
+    assert "ssh-stdin systemctl stop cocbot" in calls
+    assert "ssh-stdin systemctl disable cocbot" in calls
+    assert "systemctl start cocbot" in calls
+    assert "systemctl is-active cocbot" in calls
+
+
+@pytest.mark.parametrize("fatal", [
+    "Unauthorized",
+    "Conflict: terminated by other getUpdates request",
+    "Invalid authorization",
+    "database is locked",
+    "Startup clan sync failed",
+    "Traceback",
+])
+def test_migration_fatal_remote_logs_trigger_rollback(repo_env_files, tmp_path: Path, fatal: str) -> None:
+    res, calls = run_migration_with_journal(tmp_path, fatal)
+    assert res.returncode != 0
+    assert "Перенос успешно завершён" not in res.stdout
+    assert "ssh-stdin systemctl stop cocbot" in calls
+    assert "ssh-stdin systemctl disable cocbot" in calls
+    assert "systemctl start cocbot" in calls
+    assert "systemctl is-active cocbot" in calls
+
+
+def test_migration_warning_remote_log_is_not_fatal(repo_env_files, tmp_path: Path) -> None:
+    res, calls = run_migration_with_journal(tmp_path, "WARNING: temporary retry")
+    assert res.returncode == 0, res.stderr
+    assert "Перенос успешно завершён" in res.stdout
+    assert (REPO_ROOT / ".migration/last_server_migration.json").exists()
+    assert "sudo -n journalctl -u cocbot -n 200 --no-pager" in calls
+
+
+def test_migration_journalctl_error_triggers_rollback(repo_env_files, tmp_path: Path) -> None:
+    res, calls = run_migration_with_journal(tmp_path, "", {"REMOTE_JOURNAL_FAIL": "1"})
+    assert res.returncode != 0
+    assert "Перенос успешно завершён" not in res.stdout
+    assert not (REPO_ROOT / ".migration/last_server_migration.json").exists()
+    assert "ssh-stdin systemctl stop cocbot" in calls
+    assert "systemctl start cocbot" in calls
+
+
+def test_remote_health_runs_as_cocbot_with_deploy_sudo(repo_env_files, tmp_path: Path) -> None:
+    res, calls = run_migration_with_journal(tmp_path, "", {"REQUIRE_RUNUSER_HEALTH": "1"})
+    assert res.returncode == 0, res.stderr
+    assert calls.count("runuser -u cocbot -- bash -lc") >= 2
+    assert "chmod 640 '${REMOTE_DIR}/.env" not in calls
+    diff = run(["git", "diff", "--", "scripts/migrate_to_new_server.sh"]).stdout
+    assert "chmod 644" not in diff and "chmod 640 '${REMOTE_DIR}/.env'" not in diff and "chmod 660" not in diff
+
+
+def test_rollback_local_start_zero_but_inactive_recovers_remote(repo_env_files, tmp_path: Path) -> None:
+    write_state()
+    fake, log = make_fake_bin(tmp_path)
+    res = run(["bash", str(SCRIPTS / "rollback_server_migration.sh")], env=fake_env(fake, {"COCBOT_ROLLBACK_ASSUME_YES":"1", "LOCAL_START_INACTIVE":"1"}))
+    calls = log.read_text(encoding="utf-8")
+    assert res.returncode != 0
+    assert "Новый сервер был снова запущен" in res.stderr
+    assert "ssh testuser@example systemctl start cocbot" in calls
+    assert "ssh testuser@example systemctl is-active cocbot" in calls
+    assert "Откат завершён" not in res.stdout
+
+
+def test_rollback_remote_backup_permissions_for_deploy_umask_077(repo_env_files, tmp_path: Path) -> None:
+    write_state()
+    fake, log = make_fake_bin(tmp_path, remote_uid="1000", sudo_ok=True)
+    res = run(["bash", str(SCRIPTS / "rollback_server_migration.sh")], env=fake_env(fake, {"COCBOT_ROLLBACK_ASSUME_YES":"1", "REQUIRE_BACKUP_PERMS":"1"}))
+    calls = log.read_text(encoding="utf-8")
+    assert res.returncode == 0, res.stderr
+    assert calls.index("ssh-stdin ./.venv/bin/python scripts/backup_sqlite.py") < calls.index("sudo -n chown deploy:deploy")
+    assert calls.index("sudo -n chown deploy:deploy") < calls.index("sudo -n chmod 600")
+    assert calls.index("sudo -n chmod 600") < calls.index("scp testuser@example:/tmp/cocbot-rollback")
 
 def test_manual_rollback_failure_restarts_remote(repo_env_files, tmp_path: Path) -> None:
     write_state()
