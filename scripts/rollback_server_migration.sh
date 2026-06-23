@@ -13,6 +13,8 @@ LOCAL_SERVICE_STARTED=0
 ROLLBACK_SUCCEEDED=0
 RECOVERY_RUNNING=0
 REMOTE_UID=""
+REMOTE_SSH_USER=""
+REMOTE_SSH_GROUP=""
 REMOTE_TARGET=""
 REMOTE_DIR=""
 LOCAL_TMP=""
@@ -106,6 +108,11 @@ mkdir -p "${LOCAL_TMP}"
 local_root systemctl status "${SERVICE_NAME}" >/dev/null 2>&1 || die_before_cutover "Локальный сервис ${SERVICE_NAME} не существует"
 remote_run 'id -u' >/dev/null
 REMOTE_UID="$(remote_run 'id -u')"
+REMOTE_SSH_USER="$(remote_run 'id -un')"
+REMOTE_SSH_GROUP="$(remote_run 'id -gn')"
+[[ -n "${REMOTE_SSH_USER}" && -n "${REMOTE_SSH_GROUP}" ]] || die_before_cutover "Не удалось определить remote SSH user/group"
+[[ "${REMOTE_SSH_USER}${REMOTE_SSH_GROUP}" != *$'\n'* ]] || die_before_cutover "Некорректный remote SSH user/group"
+[[ "${REMOTE_SSH_USER}" =~ ^[A-Za-z_][A-Za-z0-9_.-]*[$]?$ && "${REMOTE_SSH_GROUP}" =~ ^[A-Za-z_][A-Za-z0-9_.-]*[$]?$ ]] || die_before_cutover "Некорректный remote SSH user/group"
 if [[ "${COCBOT_TEST_LOCAL_UID:-$(id -u)}" != "0" ]]; then
   sudo -n true >/dev/null 2>&1 || die_before_cutover $'Запустите скрипт от root\nили настройте локальный passwordless sudo для systemctl.'
 fi
@@ -149,6 +156,8 @@ cd '${REMOTE_DIR}'
 ./.venv/bin/python scripts/backup_sqlite.py --project-dir '${REMOTE_DIR}' --output '${remote_backup}' > '${remote_manifest}'
 [ "\$(sqlite3 '${remote_backup}' 'PRAGMA integrity_check;')" = ok ] || { echo remote integrity failed >&2; exit 1; }
 EOF_REMOTE_BACKUP2
+remote_root chown "${REMOTE_SSH_USER}:${REMOTE_SSH_GROUP}" "${remote_backup}" "${remote_manifest}"
+remote_root chmod 600 "${remote_backup}" "${remote_manifest}"
 scp "${REMOTE_TARGET}:${remote_manifest}" "${LOCAL_TMP}/remote-manifest.json" >/dev/null
 REMOTE_CURRENT_ACTIVE_PLAYERS="$(json_field "${LOCAL_TMP}/remote-manifest.json" active_players int)"
 REMOTE_EXPECTED_SHA="$(json_field "${LOCAL_TMP}/remote-manifest.json" sha256 str)"
@@ -177,10 +186,20 @@ LOCAL_DB_REPLACED=1
 alembic_out="$(./.venv/bin/python -m alembic check 2>&1)"; echo "${alembic_out}"
 python3.12 -c 'import sys; raise SystemExit(0 if "No new upgrade operations detected" in sys.stdin.read() else 1)' <<<"${alembic_out}"
 ./.venv/bin/python scripts/check_server_health.py --project-dir "${PROJECT_ROOT}" --offline --expected-active-players "${REMOTE_CURRENT_ACTIVE_PLAYERS}"
+LOCAL_SERVICE_STARTED=0
 local_root systemctl enable "${SERVICE_NAME}"
 local_root systemctl start "${SERVICE_NAME}"
+local_service_active=0
+for _ in {1..10}; do
+  if [[ "$(local_root systemctl is-active "${SERVICE_NAME}" 2>/dev/null || true)" == "active" ]]; then
+    local_service_active=1
+    break
+  fi
+
+  sleep 3
+done
+[[ "${local_service_active}" == "1" ]] || err "Старый сервис не стал active"
 LOCAL_SERVICE_STARTED=1
-[[ "$(local_root systemctl is-active "${SERVICE_NAME}" || true)" == active ]] || err "Старый сервис не стал active"
 local_root journalctl -u "${SERVICE_NAME}" -n 100 --no-pager >/dev/null
 remote_root bash -se <<EOF_REMOTE_DONE
 systemctl disable ${SERVICE_NAME}
