@@ -63,3 +63,33 @@ def manual_contribution_confirm_keyboard(operation_token: str) -> InlineKeyboard
 
 def admin_menu_button_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Административное меню", callback_data="manual_contribution:admin_menu")]])
+
+
+def admin_player_link_keyboard(
+    players: list,
+    page: int,
+    page_size: int = 10,
+) -> InlineKeyboardMarkup:
+    total = len(players)
+    page = max(0, page)
+    start = page * page_size
+    end = start + page_size
+    rows = []
+    for player in players[start:end]:
+        rank = player.current_clan_rank if player.current_clan_rank is not None else "—"
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{rank}. {player.name} ({player.player_tag})",
+                callback_data=f"admin_player_link:player:{player.player_tag}",
+            )
+        ])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"admin_player_link:page:{page - 1}"))
+    if end < total:
+        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"admin_player_link:page:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="✏️ Другой Telegram ID", callback_data="admin_player_link:change_user")])
+    rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="admin_player_link:cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
