@@ -196,7 +196,23 @@ async def test_reset_amount_keyboard_limits_buttons_to_active_count(app_context)
 
 
 @pytest.mark.asyncio
-async def test_reset_amount_handler_reduces_counter_and_preserves_history(session, app_context):
+async def test_reset_amount_handler_reduces_counter_and_preserves_history(
+    session,
+    app_context,
+    monkeypatch,
+):
+    async def current_cycle(self):
+        return SimpleNamespace(
+            start=_cycle()[0],
+            end=_cycle()[1],
+        )
+
+    monkeypatch.setattr(
+        PeriodService,
+        "current_cycle",
+        current_cycle,
+    )
+
     player, _ = await _seed_history(session, war_count=2, capital_count=0)
     state = FakeState(); await state.set_state(ViolationStates.awaiting_reset_amount); await state.update_data(reset_player_tag=player.player_tag, reset_player_name=player.name, reset_player_active_violations=2)
     msg = FakeMessage("1", user_id=1)
