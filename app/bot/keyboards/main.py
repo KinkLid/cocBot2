@@ -19,6 +19,7 @@ def main_menu(is_admin: bool, is_registered: bool) -> ReplyKeyboardMarkup:
         rows.extend(
             [
                 [KeyboardButton(text="👥 Список игроков")],
+                [KeyboardButton(text="🔗 Привязать игрока")],
                 [KeyboardButton(text="🧾 Разбор вклада")],
                 [KeyboardButton(text="📈 Статистика клана")],
                 [KeyboardButton(text="📦 Выгрузка JSON")],

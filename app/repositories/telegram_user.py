@@ -52,6 +52,15 @@ class TelegramUserRepository:
             await self.session.flush()
         return link
 
+    async def get_linked_telegram_ids(self, player_tag: str) -> list[int]:
+        result = await self.session.execute(
+            select(TelegramUser.telegram_id)
+            .join(TelegramPlayerLink, TelegramPlayerLink.telegram_user_id == TelegramUser.id)
+            .where(TelegramPlayerLink.player_tag == player_tag)
+            .order_by(TelegramUser.telegram_id)
+        )
+        return list(result.scalars().all())
+
     async def get_links(self, telegram_user_id: int) -> list[TelegramPlayerLink]:
         result = await self.session.execute(
             select(TelegramPlayerLink).where(TelegramPlayerLink.telegram_user_id == telegram_user_id).order_by(TelegramPlayerLink.linked_at)

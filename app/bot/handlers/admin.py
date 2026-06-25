@@ -11,6 +11,7 @@ from aiogram.types import CallbackQuery, FSInputFile, Message
 
 from app.bot.keyboards.common import (
     admin_menu_button_keyboard,
+    admin_player_link_keyboard,
     admin_sort_keyboard,
     manual_contribution_cancel_keyboard,
     manual_contribution_confirm_keyboard,
@@ -21,6 +22,7 @@ from app.bot.utils.telegram_text import edit_or_send_long_message, send_long_mes
 from app.bot.states.chat_link import ChatLinkStates
 from app.bot.states.contribution_breakdown import ContributionBreakdownStates
 from app.bot.states.manual_contribution import ManualContributionStates
+from app.bot.states.admin_player_link import AdminPlayerLinkStates
 from app.bot.states.manual_violation import ManualViolationStates
 from app.bot.states.violations import ViolationStates
 from app.container import AppContext
@@ -33,6 +35,11 @@ from app.services.donations import DonationService
 from app.services.export import ExportService
 from app.services.period import PeriodService
 from app.services.registration import RegistrationService
+from app.services.admin_player_link import (
+    AdminPlayerLinkService,
+    PlayerAlreadyLinkedToAnotherTelegramError,
+    PlayerNotAvailableForLinkError,
+)
 from app.services.manual_violation import ManualViolationService
 from app.services.stats import StatsService
 from app.repositories.player_account import PlayerAccountRepository
@@ -51,6 +58,170 @@ CONTRIBUTION_CYCLE_DATA_ERROR = "⚠️ Общий вклад пока недо�
 def _ensure_admin(app_context: AppContext, telegram_id: int) -> None:
     if not app_context.auth_service.is_admin(telegram_id):
         raise PermissionError("Недостаточно прав")
+
+
+async def _admin_is_registered(app_context: AppContext, telegram_id: int) -> bool:
+    async with app_context.session_maker() as session:
+        return await RegistrationService(session, app_context.clash_client).is_registered(telegram_id)
+
+
+@router.message(F.text == "🔗 Привязать игрока")
+async def admin_player_link_start(message: Message, state: FSMContext, app_context: AppContext) -> None:
+    try:
+        _ensure_admin(app_context, message.from_user.id)
+    except PermissionError:
+        await message.answer("⛔ Недостаточно прав")
+        return
+    await state.clear()
+    await state.set_state(AdminPlayerLinkStates.waiting_for_telegram_id)
+    await message.answer(
+        "🔗 Ручная привязка игрока\n\n"
+        "Введите числовой Telegram ID пользователя, которому нужно привязать игровой аккаунт.\n\n"
+        "Telegram ID можно узнать у пользователя через Telegram-ботов для определения ID.",
+        reply_markup=back_keyboard(),
+    )
+
+
+@router.message(AdminPlayerLinkStates.waiting_for_telegram_id)
+async def admin_player_link_receive_telegram_id(message: Message, state: FSMContext, app_context: AppContext) -> None:
+    try:
+        _ensure_admin(app_context, message.from_user.id)
+    except PermissionError:
+        await message.answer("⛔ Недостаточно прав")
+        await state.clear()
+        return
+    text = (message.text or "").strip()
+    if text == "⬅️ Назад":
+        await state.clear()
+        is_registered = await _admin_is_registered(app_context, message.from_user.id)
+        await message.answer("Административное меню", reply_markup=main_menu(is_admin=True, is_registered=is_registered))
+        return
+    if not text.isdigit() or int(text) <= 0:
+        await message.answer("⚠️ Telegram ID должен состоять только из цифр и быть больше нуля. Попробуйте ещё раз или нажмите ⬅️ Назад.")
+        return
+    telegram_id = int(text)
+    async with app_context.session_maker() as session:
+        players = await AdminPlayerLinkService(session, app_context.config).list_active_players()
+    if not players:
+        await state.clear()
+        await message.answer("⚠️ В основном клане нет доступных игроков для привязки.")
+        return
+    await state.update_data(target_telegram_id=telegram_id)
+    await state.set_state(AdminPlayerLinkStates.choosing_player)
+    await message.answer(
+        f"Выберите игрока, которого нужно привязать к Telegram ID {telegram_id}.",
+        reply_markup=admin_player_link_keyboard(players, page=0),
+    )
+
+
+@router.callback_query(AdminPlayerLinkStates.choosing_player, F.data.startswith("admin_player_link:page:"))
+async def admin_player_link_change_page(callback: CallbackQuery, state: FSMContext, app_context: AppContext) -> None:
+    try:
+        _ensure_admin(app_context, callback.from_user.id)
+    except PermissionError:
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    data = await state.get_data()
+    telegram_id = data.get("target_telegram_id")
+    if telegram_id is None:
+        await state.clear()
+        await callback.answer("Сессия устарела. Начните привязку заново.", show_alert=True)
+        return
+    try:
+        page = int((callback.data or "").rsplit(":", 1)[1])
+    except ValueError:
+        page = 0
+    async with app_context.session_maker() as session:
+        players = await AdminPlayerLinkService(session, app_context.config).list_active_players()
+    max_page = max(0, (len(players) - 1) // 10)
+    page = min(max(page, 0), max_page)
+    await callback.message.edit_text(
+        f"Выберите игрока, которого нужно привязать к Telegram ID {telegram_id}.",
+        reply_markup=admin_player_link_keyboard(players, page=page),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_player_link:change_user")
+async def admin_player_link_change_user(callback: CallbackQuery, state: FSMContext, app_context: AppContext) -> None:
+    try:
+        _ensure_admin(app_context, callback.from_user.id)
+    except PermissionError:
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    await state.clear()
+    await state.set_state(AdminPlayerLinkStates.waiting_for_telegram_id)
+    await callback.message.edit_text("Введите другой числовой Telegram ID пользователя.")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_player_link:cancel")
+async def admin_player_link_cancel(callback: CallbackQuery, state: FSMContext, app_context: AppContext) -> None:
+    try:
+        _ensure_admin(app_context, callback.from_user.id)
+    except PermissionError:
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    await state.clear()
+    await callback.message.edit_text("❌ Ручная привязка отменена.")
+    is_registered = await _admin_is_registered(app_context, callback.from_user.id)
+    await callback.message.answer("Административное меню", reply_markup=main_menu(is_admin=True, is_registered=is_registered))
+    await callback.answer()
+
+
+@router.callback_query(AdminPlayerLinkStates.choosing_player, F.data.startswith("admin_player_link:player:"))
+async def admin_player_link_select_player(callback: CallbackQuery, state: FSMContext, app_context: AppContext) -> None:
+    try:
+        _ensure_admin(app_context, callback.from_user.id)
+    except PermissionError:
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    data = await state.get_data()
+    telegram_id = data.get("target_telegram_id")
+    if telegram_id is None:
+        await state.clear()
+        await callback.answer("Сессия устарела. Начните привязку заново.", show_alert=True)
+        return
+    player_tag = (callback.data or "").split("admin_player_link:player:", 1)[1]
+    try:
+        async with app_context.session_maker() as session:
+            result = await AdminPlayerLinkService(session, app_context.config).link_player(
+                telegram_id=int(telegram_id),
+                player_tag=player_tag,
+            )
+            is_registered = await RegistrationService(session, app_context.clash_client).is_registered(callback.from_user.id)
+    except PlayerAlreadyLinkedToAnotherTelegramError as exc:
+        await callback.answer(
+            "Этот игровой аккаунт уже привязан к Telegram ID: " + ", ".join(str(i) for i in exc.owner_telegram_ids),
+            show_alert=True,
+        )
+        return
+    except PlayerNotAvailableForLinkError:
+        await callback.answer("Игрок больше не состоит в основном клане. Обновите список.", show_alert=True)
+        return
+    except Exception:
+        logger.exception("Failed to manually link player")
+        await state.clear()
+        await callback.answer("⚠️ Не удалось выполнить ручную привязку. Попробуйте позже.", show_alert=True)
+        return
+
+    await state.clear()
+    if result.already_linked:
+        await callback.message.edit_text(
+            f"ℹ️ Игрок {result.player_name} ({result.player_tag}) уже привязан к Telegram ID {result.telegram_id}. Изменения не требуются."
+        )
+    else:
+        await callback.message.edit_text(
+            f"✅ Игрок {result.player_name} ({result.player_tag}) привязан к Telegram ID {result.telegram_id}."
+        )
+        logger.info(
+            "Admin %s manually linked player %s to Telegram ID %s",
+            callback.from_user.id,
+            result.player_tag,
+            result.telegram_id,
+        )
+    await callback.message.answer("Административное меню", reply_markup=main_menu(is_admin=True, is_registered=is_registered))
+    await callback.answer()
 
 
 @router.message(F.text == "👥 Список игроков")
