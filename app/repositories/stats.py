@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Attack, CapitalRaidViolation, CapitalRaidWeekend, PlayerAccount, TelegramPlayerLink, TelegramUser, Violation, War, WarParticipant
+from app.models import Attack, CapitalRaidViolation, CapitalRaidWeekend, ClanMembershipHistory, PlayerAccount, TelegramPlayerLink, TelegramUser, Violation, War, WarParticipant
 
 
 @dataclass(slots=True)
@@ -36,6 +36,7 @@ class StatsRepository:
         period_start: datetime,
         period_end: datetime,
         player_tags: list[str] | None = None,
+        include_historical_members: bool = False,
     ) -> list[AggregatedStatsRow]:
         attacks_subq = (
             select(
@@ -115,9 +116,24 @@ class StatsRepository:
             .outerjoin(capital_violations_subq, capital_violations_subq.c.player_tag == PlayerAccount.player_tag)
             .outerjoin(TelegramPlayerLink, TelegramPlayerLink.player_tag == PlayerAccount.player_tag)
             .outerjoin(TelegramUser, TelegramUser.id == TelegramPlayerLink.telegram_user_id)
-            .where(PlayerAccount.current_in_clan.is_(True), PlayerAccount.current_clan_tag == clan_tag)
             .order_by(PlayerAccount.current_clan_rank.asc().nulls_last(), PlayerAccount.name.asc())
         )
+        if include_historical_members:
+            membership_exists = exists().where(
+                and_(
+                    ClanMembershipHistory.player_id == PlayerAccount.id,
+                    ClanMembershipHistory.clan_tag == clan_tag,
+                    ClanMembershipHistory.joined_at <= period_end,
+                    or_(
+                        ClanMembershipHistory.left_at.is_(None),
+                        ClanMembershipHistory.left_at > period_start,
+                    ),
+                )
+            )
+            stmt = stmt.where(membership_exists)
+        else:
+            stmt = stmt.where(PlayerAccount.current_in_clan.is_(True), PlayerAccount.current_clan_tag == clan_tag)
+
         if player_tags:
             stmt = stmt.where(PlayerAccount.player_tag.in_(player_tags))
 

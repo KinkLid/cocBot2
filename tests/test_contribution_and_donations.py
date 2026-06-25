@@ -8,8 +8,15 @@ import asyncio
 from contextlib import asynccontextmanager
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.bot.handlers.admin import dev_contribution, dev_donations
+from app.db.base import Base
+
+from app.bot.handlers.admin import (
+    dev_contribution,
+    dev_donations,
+    previous_cycle_contribution,
+)
 from app.bot.keyboards.main import main_menu
 from app.domain.dev_contribution import (
     ContributionAttackInput,
@@ -17,7 +24,8 @@ from app.domain.dev_contribution import (
     calculate_cwl_unused_attack_penalty,
     calculate_unused_attack_penalty,
 )
-from app.models.enums import ViolationCode, WarType
+from app.models import Attack, ClanMembershipHistory, PlayerAccount, War
+from app.models.enums import ViolationCode, WarState, WarType
 from app.schemas.dto import PlayerProfileDTO
 from app.services import dev_contribution as contribution_module
 from app.services.contribution_breakdown import (
@@ -594,7 +602,7 @@ def test_dev_contribution_mixed_players_with_and_without_stars_builds_report(app
     monkeypatch.setattr(contribution_module.StatsRepository, "participation_rows_for_players", AsyncMock(return_value=[]))
     monkeypatch.setattr(contribution_module.StatsRepository, "enemy_participation_rows_for_wars", AsyncMock(return_value=[]))
 
-    async def newcomer_side_effect(player_id):
+    async def newcomer_side_effect(player_id, as_of=None):
         return player_id == 2
 
     monkeypatch.setattr(DevContributionService, "is_newcomer", AsyncMock(side_effect=newcomer_side_effect))
@@ -988,3 +996,246 @@ def test_build_contribution_ranking_uses_only_previous_attacks_for_baseline(app_
     ranking = asyncio.run(DevContributionService(object(), app_yaml_config).build_contribution_ranking(SimpleNamespace(start=NOW - timedelta(days=1), end=NOW)))
 
     assert ranking[0].score == 51.0
+
+
+
+def _menu_texts(markup):
+    return [button.text for row in markup.keyboard for button in row]
+
+
+def test_previous_cycle_contribution_button_is_public():
+    for menu in (
+        main_menu(is_admin=False, is_registered=True),
+        main_menu(is_admin=True, is_registered=True),
+        main_menu(is_admin=False, is_registered=False),
+    ):
+        flat = _menu_texts(menu)
+        assert "📚 Вклад прошлого цикла" in flat
+        assert flat.index("🏆 Общий вклад") < flat.index("📚 Вклад прошлого цикла") < flat.index("📋 Мой вклад")
+
+
+def test_previous_cycle_contribution_uses_previous_cycle(app_yaml_config, monkeypatch):
+    period = SimpleNamespace(start=datetime(2026, 5, 1, tzinfo=UTC), end=datetime(2026, 6, 1, tzinfo=UTC))
+    ranking = [object()]
+    monkeypatch.setattr("app.bot.handlers.admin.PeriodService.previous_cycle", AsyncMock(return_value=period))
+    monkeypatch.setattr(DevContributionService, "build_contribution_ranking", AsyncMock(return_value=ranking))
+    monkeypatch.setattr(DevContributionService, "format_contribution_ranking", Mock(return_value="report"))
+    message = FakeMessage("📚 Вклад прошлого цикла", user_id=99)
+
+    asyncio.run(previous_cycle_contribution(message, _build_test_app_context(app_yaml_config)))
+
+    contribution_module.DevContributionService.build_contribution_ranking.assert_awaited_once_with(period, include_historical_members=True)
+    contribution_module.DevContributionService.format_contribution_ranking.assert_called_once_with(
+        ranking,
+        title="🏆 Общий вклад за прошлый цикл",
+        period=period,
+    )
+    message.answer.assert_called_once_with("report")
+
+
+def test_previous_cycle_contribution_does_not_use_current_cycle(app_yaml_config, monkeypatch):
+    period = SimpleNamespace(start=datetime(2026, 5, 1, tzinfo=UTC), end=datetime(2026, 6, 1, tzinfo=UTC))
+    previous = AsyncMock(return_value=period)
+    current = AsyncMock()
+    monkeypatch.setattr("app.bot.handlers.admin.PeriodService.previous_cycle", previous)
+    monkeypatch.setattr("app.bot.handlers.admin.PeriodService.current_cycle", current)
+    monkeypatch.setattr(DevContributionService, "build_contribution_ranking", AsyncMock(return_value=[]))
+    monkeypatch.setattr(DevContributionService, "format_contribution_ranking", Mock(return_value="report"))
+    message = FakeMessage("📚 Вклад прошлого цикла", user_id=99)
+
+    asyncio.run(previous_cycle_contribution(message, _build_test_app_context(app_yaml_config)))
+
+    previous.assert_awaited_once_with()
+    current.assert_not_called()
+
+
+def test_previous_cycle_contribution_missing_boundaries_returns_safe_message(app_yaml_config, monkeypatch):
+    monkeypatch.setattr(
+        "app.bot.handlers.admin.PeriodService.previous_cycle",
+        AsyncMock(side_effect=ValueError("Прошлый цикл недоступен: в базе недостаточно границ циклов ЛВК")),
+    )
+    message = FakeMessage("📚 Вклад прошлого цикла", user_id=99)
+
+    asyncio.run(previous_cycle_contribution(message, _build_test_app_context(app_yaml_config)))
+
+    message.answer.assert_called_once_with("⚠️ Общий вклад за прошлый цикл недоступен: в базе недостаточно границ циклов ЛВК.")
+
+
+def test_previous_cycle_contribution_without_data_returns_safe_message(app_yaml_config, monkeypatch):
+    period = SimpleNamespace(start=datetime(2026, 5, 1, tzinfo=UTC), end=datetime(2026, 6, 1, tzinfo=UTC))
+    monkeypatch.setattr("app.bot.handlers.admin.PeriodService.previous_cycle", AsyncMock(return_value=period))
+    monkeypatch.setattr(
+        DevContributionService,
+        "build_contribution_ranking",
+        AsyncMock(side_effect=ContributionDataUnavailableError("в текущем цикле нет данных")),
+    )
+    message = FakeMessage("📚 Вклад прошлого цикла", user_id=99)
+
+    asyncio.run(previous_cycle_contribution(message, _build_test_app_context(app_yaml_config)))
+
+    message.answer.assert_called_once_with("⚠️ Общий вклад за прошлый цикл недоступен: за прошлый цикл недостаточно данных.")
+    assert "текущий цикл" not in message.answer.call_args.args[0]
+
+
+def test_previous_cycle_contribution_unexpected_error_is_logged(app_yaml_config, monkeypatch):
+    monkeypatch.setattr("app.bot.handlers.admin.PeriodService.previous_cycle", AsyncMock(side_effect=RuntimeError("boom")))
+    logger = Mock()
+    monkeypatch.setattr("app.bot.handlers.admin.logger", logger)
+    message = FakeMessage("📚 Вклад прошлого цикла", user_id=99)
+
+    asyncio.run(previous_cycle_contribution(message, _build_test_app_context(app_yaml_config)))
+
+    logger.exception.assert_called_once_with("Failed to build previous cycle contribution report")
+    message.answer.assert_called_once_with("⚠️ Не удалось построить отчет по общему вкладу за прошлый цикл. Попробуйте позже.")
+
+
+def test_previous_cycle_contribution_format_contains_title_and_dates():
+    service = DevContributionService(object(), SimpleNamespace(main_clan_tag="#CLAN"))
+    period = SimpleNamespace(start=datetime(2026, 5, 1, tzinfo=UTC), end=datetime(2026, 6, 1, tzinfo=UTC))
+    text = service.format_contribution_ranking(
+        [ContributionRankingRow("#P1", "Alpha", 1, 100.0, False)],
+        title="🏆 Общий вклад за прошлый цикл",
+        period=period,
+    )
+    assert text.splitlines() == [
+        "🏆 Общий вклад за прошлый цикл",
+        "📅 01.05.2026 — 01.06.2026",
+        "",
+        "1. Alpha — 100.00",
+    ]
+
+
+def test_current_contribution_format_is_unchanged_without_period():
+    service = DevContributionService(object(), SimpleNamespace(main_clan_tag="#CLAN"))
+    assert service.format_contribution_ranking([ContributionRankingRow("#P1", "Alpha", 1, 100.0, False)]) == "🏆 Общий вклад\n\n1. Alpha — 100.00"
+
+
+def _player(tag, name, *, in_clan=False, clan="#CLAN"):
+    return PlayerAccount(player_tag=tag, name=name, town_hall=16, current_clan_tag=clan, current_clan_name="Clan", current_clan_rank=1, current_in_clan=in_clan, created_at=NOW, updated_at=NOW)
+
+
+def _war(uid, period):
+    return War(war_uid=uid, clan_tag="#CLAN", clan_name="Clan", opponent_tag="#OP", opponent_name="Opp", war_type=WarType.REGULAR, state=WarState.WAR_ENDED, team_size=1, is_friendly=False, start_time=period.start + timedelta(days=1), end_time=period.start + timedelta(days=2), source_payload={})
+
+
+def _attack(player, war, period):
+    return Attack(war=war, attacker=player, attacker_tag=player.player_tag, attacker_name=player.name, attacker_position=1, attacker_town_hall=16, defender_tag="#D", defender_name="D", defender_position=1, defender_town_hall=16, stars=3, destruction=100, attack_order=1, observed_at=period.start + timedelta(days=1, hours=1))
+
+
+
+async def _with_test_session(tmp_path, scenario):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'previous_cycle.sqlite3'}")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    try:
+        async with maker() as session:
+            return await scenario(session)
+    finally:
+        await engine.dispose()
+
+
+def test_previous_cycle_ranking_includes_player_who_left_after_cycle(tmp_path, app_yaml_config):
+    async def scenario(session):
+        period = SimpleNamespace(start=datetime(2026, 5, 1, tzinfo=UTC), end=datetime(2026, 6, 1, tzinfo=UTC))
+        player = _player("#LEFT", "Left", in_clan=False)
+        war = _war("w-left", period)
+        session.add_all([player, war])
+        await session.flush()
+        session.add_all([ClanMembershipHistory(player_id=player.id, clan_tag="#CLAN", joined_at=period.start - timedelta(days=2), left_at=period.end + timedelta(days=1)), _attack(player, war, period)])
+        await session.commit()
+        ranking = await DevContributionService(session, app_yaml_config).build_contribution_ranking(period, include_historical_members=True)
+        assert "#LEFT" in {row.player_tag for row in ranking}
+
+    asyncio.run(_with_test_session(tmp_path, scenario))
+
+
+def test_previous_cycle_ranking_excludes_player_joined_after_cycle(tmp_path, app_yaml_config):
+    async def scenario(session):
+        period = SimpleNamespace(start=datetime(2026, 5, 1, tzinfo=UTC), end=datetime(2026, 6, 1, tzinfo=UTC))
+        player = _player("#AFTER", "After", in_clan=False)
+        valid = _player("#VALID", "Valid", in_clan=False)
+        war = _war("w-after", period)
+        session.add_all([player, valid, war])
+        await session.flush()
+        session.add_all([
+            ClanMembershipHistory(player_id=valid.id, clan_tag="#CLAN", joined_at=period.start - timedelta(days=1), left_at=None),
+            ClanMembershipHistory(player_id=player.id, clan_tag="#CLAN", joined_at=period.end + timedelta(days=1), left_at=None),
+            _attack(player, war, period),
+            _attack(valid, war, period),
+        ])
+        await session.commit()
+        ranking = await DevContributionService(session, app_yaml_config).build_contribution_ranking(period, include_historical_members=True)
+        assert "#AFTER" not in {row.player_tag for row in ranking}
+
+    asyncio.run(_with_test_session(tmp_path, scenario))
+
+
+def test_previous_cycle_ranking_excludes_membership_in_another_clan(tmp_path, app_yaml_config):
+    async def scenario(session):
+        period = SimpleNamespace(start=datetime(2026, 5, 1, tzinfo=UTC), end=datetime(2026, 6, 1, tzinfo=UTC))
+        player = _player("#OTHER", "Other", in_clan=False, clan="#OTHER")
+        valid = _player("#VALID", "Valid", in_clan=False)
+        war = _war("w-other", period)
+        session.add_all([player, valid, war])
+        await session.flush()
+        session.add_all([
+            ClanMembershipHistory(player_id=valid.id, clan_tag="#CLAN", joined_at=period.start - timedelta(days=1), left_at=None),
+            ClanMembershipHistory(player_id=player.id, clan_tag="#OTHER", joined_at=period.start - timedelta(days=1), left_at=None),
+            _attack(player, war, period),
+            _attack(valid, war, period),
+        ])
+        await session.commit()
+        ranking = await DevContributionService(session, app_yaml_config).build_contribution_ranking(period, include_historical_members=True)
+        assert "#OTHER" not in {row.player_tag for row in ranking}
+
+    asyncio.run(_with_test_session(tmp_path, scenario))
+
+
+def test_current_contribution_still_uses_current_members_only(tmp_path, app_yaml_config):
+    async def scenario(session):
+        period = SimpleNamespace(start=datetime(2026, 5, 1, tzinfo=UTC), end=datetime(2026, 6, 1, tzinfo=UTC))
+        player = _player("#LEFTNOW", "LeftNow", in_clan=False)
+        war = _war("w-current", period)
+        session.add_all([player, war])
+        await session.flush()
+        session.add_all([ClanMembershipHistory(player_id=player.id, clan_tag="#CLAN", joined_at=period.start - timedelta(days=1), left_at=None), _attack(player, war, period)])
+        await session.commit()
+        with pytest.raises(ContributionDataUnavailableError):
+            await DevContributionService(session, app_yaml_config).build_contribution_ranking(period)
+
+    asyncio.run(_with_test_session(tmp_path, scenario))
+
+
+def test_newcomer_status_is_calculated_at_previous_cycle_end(tmp_path, app_yaml_config):
+    async def scenario(session):
+        period = SimpleNamespace(start=datetime(2026, 5, 1, tzinfo=UTC), end=datetime(2026, 6, 1, tzinfo=UTC))
+        player = _player("#NEW", "New", in_clan=True)
+        war = _war("w-new", period)
+        session.add_all([player, war])
+        await session.flush()
+        session.add_all([ClanMembershipHistory(player_id=player.id, clan_tag="#CLAN", joined_at=period.end - timedelta(days=3), left_at=None), _attack(player, war, period)])
+        await session.commit()
+        ranking = await DevContributionService(session, app_yaml_config).build_contribution_ranking(period, include_historical_members=True)
+        assert ranking[0].newcomer is True
+
+    asyncio.run(_with_test_session(tmp_path, scenario))
+
+
+def test_membership_after_period_end_does_not_affect_previous_newcomer_status(tmp_path, app_yaml_config):
+    async def scenario(session):
+        period = SimpleNamespace(start=datetime(2026, 5, 1, tzinfo=UTC), end=datetime(2026, 6, 1, tzinfo=UTC))
+        player = _player("#OLD", "Old", in_clan=True)
+        war = _war("w-old", period)
+        session.add_all([player, war])
+        await session.flush()
+        session.add_all([
+            ClanMembershipHistory(player_id=player.id, clan_tag="#CLAN", joined_at=period.end - timedelta(days=8), left_at=period.end - timedelta(days=1)),
+            ClanMembershipHistory(player_id=player.id, clan_tag="#CLAN", joined_at=period.end + timedelta(days=1), left_at=None),
+            _attack(player, war, period),
+        ])
+        await session.commit()
+        ranking = await DevContributionService(session, app_yaml_config).build_contribution_ranking(period, include_historical_members=True)
+        assert ranking[0].newcomer is False
+
+    asyncio.run(_with_test_session(tmp_path, scenario))

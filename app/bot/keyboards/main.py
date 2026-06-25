@@ -12,6 +12,7 @@ def main_menu(is_admin: bool, is_registered: bool) -> ReplyKeyboardMarkup:
             [KeyboardButton(text="🔗 Ссылка на чат клана")],
             [KeyboardButton(text="📊 Моя статистика")],
             [KeyboardButton(text="🏆 Общий вклад")],
+            [KeyboardButton(text="📚 Вклад прошлого цикла")],
             [KeyboardButton(text="📋 Мой вклад")],
         ]
     )
