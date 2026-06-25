@@ -163,7 +163,12 @@ class StatsService:
                 for player_tag, player_name, clan_rank, violations in rows
                 if violations > 0
             ),
-            key=lambda row: (-row[3], row[2] or 10_000, row[1]),
+            key=lambda row: (
+                -row[3],
+                -row[4],
+                row[2] or 10_000,
+                row[1],
+            ),
         )
         return [
             {

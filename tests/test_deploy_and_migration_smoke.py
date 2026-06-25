@@ -59,20 +59,43 @@ def test_migration_helpers_detect_existing_table_and_indexes() -> None:
 
 import os
 import subprocess
+import sys
 
 
 def _run_alembic(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
     db = tmp_path / "migration.sqlite3"
     env = os.environ.copy()
     env["DATABASE_URL"] = f"sqlite+aiosqlite:///{db}"
-    return subprocess.run(["alembic", *args], cwd=REPO_ROOT, env=env, text=True, capture_output=True, check=False)
+    return subprocess.run([sys.executable, "-m", "alembic", *args], cwd=REPO_ROOT, env=env, text=True, capture_output=True, check=False)
 
 
 def test_alembic_round_trip_and_check_on_empty_sqlite(tmp_path: Path) -> None:
-    for args in [("upgrade", "head"), ("check",), ("downgrade", "base"), ("upgrade", "head"), ("check",)]:
-        result = _run_alembic(tmp_path, *args)
-        assert result.returncode == 0, result.stdout + result.stderr
-    assert "No new upgrade operations detected" in (result.stdout + result.stderr)
+    result = _run_alembic(tmp_path, "upgrade", "head")
+    assert result.returncode == 0, result.stdout + result.stderr
+    engine = sa.create_engine(f"sqlite+pysqlite:///{tmp_path / 'migration.sqlite3'}")
+    inspector = sa.inspect(engine)
+    assert "violations" in inspector.get_table_names()
+    assert "cwl_missed_attack_violations" not in inspector.get_table_names()
+    violation_columns = {column["name"]: column for column in inspector.get_columns("violations")}
+    assert violation_columns["attack_id"]["nullable"] is True
+    assert violation_columns["target_position"]["nullable"] is True
+    checks = inspector.get_check_constraints("violations")
+    assert any("cwl_missed_attack" in (check.get("sqltext") or "") for check in checks)
+    indexes = {index["name"]: index for index in inspector.get_indexes("violations")}
+    cwl_index = indexes["uq_violations_cwl_missed_attack_per_war_player"]
+    assert cwl_index["unique"] == 1
+    assert "code = 'cwl_missed_attack'" in str(cwl_index.get("dialect_options", {}).get("sqlite_where", ""))
+    reset_columns = {column["name"]: column for column in inspector.get_columns("violation_counter_resets")}
+    assert reset_columns["reset_amount"]["nullable"] is True
+    engine.dispose()
+
+    check = _run_alembic(tmp_path, "check")
+    assert check.returncode == 0, check.stdout + check.stderr
+    assert "No new upgrade operations detected" in (check.stdout + check.stderr)
+    downgrade = _run_alembic(tmp_path, "downgrade", "base")
+    assert downgrade.returncode == 0, downgrade.stdout + downgrade.stderr
+    repeat = _run_alembic(tmp_path, "upgrade", "head")
+    assert repeat.returncode == 0, repeat.stdout + repeat.stderr
 
 
 def test_alembic_upgrade_from_0009_to_head_and_manual_indexes(tmp_path: Path) -> None:
@@ -98,3 +121,25 @@ def test_alembic_head_is_idempotent_and_check_clean(tmp_path: Path) -> None:
     check = _run_alembic(tmp_path, "check")
     assert check.returncode == 0, check.stdout + check.stderr
     assert "No new upgrade operations detected" in (check.stdout + check.stderr)
+
+
+def test_alembic_upgrade_from_0010_preserves_existing_violations_and_legacy_reset(tmp_path: Path) -> None:
+    assert _run_alembic(tmp_path, "upgrade", "0010_manual_contribution_idempotency").returncode == 0
+    engine = sa.create_engine(f"sqlite+pysqlite:///{tmp_path / 'migration.sqlite3'}")
+    with engine.begin() as conn:
+        conn.execute(sa.text("INSERT INTO wars (war_uid, clan_tag, clan_name, opponent_tag, opponent_name, war_type, state, team_size, is_friendly, start_time, end_time, preparation_start_time, source_payload) VALUES ('old-war', '#CLAN', 'Clan', '#E', 'Enemy', 'regular', 'war_ended', 15, 0, '2026-04-01 00:00:00', '2026-04-02 00:00:00', '2026-03-31 00:00:00', '{}')"))
+        war_id = conn.execute(sa.text("SELECT id FROM wars WHERE war_uid='old-war'")).scalar_one()
+        conn.execute(sa.text("INSERT INTO attacks (war_id, attacker_tag, attacker_name, attacker_position, attacker_town_hall, defender_tag, defender_name, defender_position, defender_town_hall, stars, destruction, attack_order, observed_at) VALUES (:war_id, '#P1', 'Alpha', 1, 16, '#E1', 'Enemy', 1, 16, 1, 50, 1, '2026-04-01 01:00:00')"), {"war_id": war_id})
+        attack_id = conn.execute(sa.text("SELECT id FROM attacks WHERE war_id=:war_id"), {"war_id": war_id}).scalar_one()
+        conn.execute(sa.text("INSERT INTO violations (attack_id, war_id, player_tag, code, reason_text, player_position, target_position, detected_at, is_manual) VALUES (:attack_id, :war_id, '#P1', 'above_self', 'old', 1, 1, '2026-04-01 01:00:00', 0)"), {"attack_id": attack_id, "war_id": war_id})
+        conn.execute(sa.text("INSERT INTO violation_counter_resets (player_tag, cycle_start, reset_at, reset_by_admin_telegram_id) VALUES ('#P1', '2026-04-01 00:00:00', '2026-04-02 00:00:00', 1)"))
+    engine.dispose()
+
+    result = _run_alembic(tmp_path, "upgrade", "head")
+    assert result.returncode == 0, result.stdout + result.stderr
+    engine = sa.create_engine(f"sqlite+pysqlite:///{tmp_path / 'migration.sqlite3'}")
+    with engine.connect() as conn:
+        assert conn.execute(sa.text("SELECT count(*) FROM violations")).scalar_one() == 1
+        assert conn.execute(sa.text("SELECT count(*) FROM violation_counter_resets")).scalar_one() == 1
+        assert conn.execute(sa.text("SELECT reset_amount FROM violation_counter_resets")).scalar_one() is None
+    engine.dispose()

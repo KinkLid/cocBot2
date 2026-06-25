@@ -22,6 +22,8 @@ from app.bot.handlers.admin import (
 from app.bot.handlers.common import clan_chat_link
 from app.bot.keyboards.main import main_menu
 from app.bot.states.chat_link import ChatLinkStates
+from app.models import PlayerAccount, Violation
+from app.models.enums import ViolationCode
 from app.services.clan_chat import ClanChatService
 from app.services.export import ExportService
 from app.services.period import PeriodService
@@ -29,6 +31,7 @@ from app.services.stats import FormattedStats, StatsService
 from tests.fakes import FakeCallback, FakeMessage, FakeState
 from app.bot.states.violations import ViolationStates
 from tests.test_stats import seed_stats_data
+from tests.helpers import make_cwl_war
 
 
 CAPITAL_NO_DATA_TEXT = "⚠️ По столице за текущий цикл пока нет данных."
@@ -315,3 +318,43 @@ def test_dev_capital_button_visible_only_for_admin():
     assert "🧪 Dev вклад в столицу" in admin_texts
     assert "🧪 Dev вклад в столицу" not in user_texts
     assert "🧪 Dev-столица" not in admin_texts
+
+
+@pytest.mark.asyncio
+async def test_json_export_marks_cwl_missed_attack_violation_without_separate_section(session, app_yaml_config, fake_clash_client):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from app.services.war_sync import WarSyncService
+
+    now = datetime(2026, 4, 1, tzinfo=UTC)
+    session.add_all([
+        PlayerAccount(player_tag="#P2", name="Alpha", town_hall=16, current_clan_tag="#CLAN", current_clan_name="Clan", current_clan_rank=1, current_in_clan=True, last_seen_in_clan_at=now, created_at=now, updated_at=now),
+        PlayerAccount(player_tag="#P3", name="Bravo", town_hall=16, current_clan_tag="#CLAN", current_clan_name="Clan", current_clan_rank=2, current_in_clan=True, last_seen_in_clan_at=now, created_at=now, updated_at=now),
+    ])
+    await session.commit()
+    dto = make_cwl_war(start=datetime(2026, 4, 1, 10, tzinfo=UTC), attacker_position=5, defender_position=5, round_index=0, attacker_tag="#P2", attacker_name="Alpha")
+    dto.state = "warEnded"
+    dto.clan.members[0].attacks = []
+    attacked = make_cwl_war(start=datetime(2026, 4, 1, 10, tzinfo=UTC), attacker_position=6, defender_position=6, round_index=0, attacker_tag="#P3", attacker_name="Bravo")
+    dto.clan.members.append(attacked.clan.members[0])
+
+    notifier = SimpleNamespace(notify_once=AsyncMock())
+    service = WarSyncService(session, fake_clash_client, app_yaml_config, notifier)
+    service.period_service.current_cycle = AsyncMock(return_value=SimpleNamespace(start=datetime(2026, 4, 1, tzinfo=UTC), end=datetime(2026, 5, 1, tzinfo=UTC)))
+    war = await service._persist_war(dto)
+    if not await session.scalar(select(Violation).where(Violation.player_tag == "#P2")):
+        session.add(Violation(attack_id=None, war_id=war.id, player_tag="#P2", code=ViolationCode.CWL_MISSED_ATTACK, reason_text="Не использовал атаку в ЛВК", player_position=5, target_position=None, detected_at=datetime(2026, 4, 2, 10, tzinfo=UTC), is_manual=False))
+    await session.commit()
+
+    payload = await ExportService(session, app_yaml_config).export_to_dict(datetime(2026, 4, 1, tzinfo=UTC), datetime(2026, 5, 1, tzinfo=UTC))
+    assert "cwl_missed_attack_violations" not in payload
+    alpha = next(p for p in payload["players"] if p["player_tag"] == "#P2")
+    bravo = next(p for p in payload["players"] if p["player_tag"] == "#P3")
+    alpha_war = alpha["participation"][0]
+    bravo_war = bravo["participation"][0]
+    assert alpha_war["missed_attack_violation"] is True
+    assert alpha_war["missed_attack_violation_code"] == "cwl_missed_attack"
+    assert alpha_war["missed_attack_violation_reason"] == "Не использовал атаку в ЛВК"
+    assert bravo_war["missed_attack_violation"] is False
+    assert bravo_war["missed_attack_violation_code"] is None
+    assert bravo_war["missed_attack_violation_reason"] is None
