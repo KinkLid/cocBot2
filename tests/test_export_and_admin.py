@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import select
 from unittest.mock import AsyncMock
 
 from app.bot.handlers.admin import (
