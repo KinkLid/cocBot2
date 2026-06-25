@@ -17,7 +17,7 @@ from app.bot.keyboards.common import (
     manual_contribution_confirm_keyboard,
     manual_contribution_players_keyboard,
 )
-from app.bot.keyboards.main import back_keyboard, main_menu
+from app.bot.keyboards.main import back_keyboard, main_menu, violation_reset_amount_keyboard
 from app.bot.utils.telegram_text import edit_or_send_long_message, send_long_message
 from app.bot.states.chat_link import ChatLinkStates
 from app.bot.states.contribution_breakdown import ContributionBreakdownStates
@@ -45,7 +45,7 @@ from app.services.stats import StatsService
 from app.repositories.player_account import PlayerAccountRepository
 from app.repositories.telegram_user import TelegramUserRepository
 from app.repositories.manual_contribution import ManualContributionRepository
-from app.repositories.violation_counter_reset import ViolationCounterResetRepository
+from app.services.active_violation_counter import ActiveViolationCounterService
 from app.utils.time import utcnow
 
 router = Router(name="admin")
@@ -639,24 +639,87 @@ async def reset_violation_counter_selected(
         return
 
     selected = options[idx - 1]
+    active_count = int(selected["violations"])
+    await state.update_data(
+        reset_player_tag=selected["player_tag"],
+        reset_player_name=selected["player_name"],
+        reset_player_active_violations=active_count,
+    )
+    await state.set_state(ViolationStates.awaiting_reset_amount)
+    await message.answer(
+        f"Игрок: {selected['player_name']}\n"
+        f"Активных нарушений: {active_count}\n\n"
+        "Сколько нарушений списать из активного счетчика?",
+        reply_markup=violation_reset_amount_keyboard(active_count),
+    )
+
+
+@router.message(ViolationStates.awaiting_reset_amount)
+async def reset_violation_counter_amount_selected(
+    message: Message, state: FSMContext, app_context: AppContext
+) -> None:
+    try:
+        _ensure_admin(app_context, message.from_user.id)
+    except PermissionError:
+        await message.answer("⛔ Недостаточно прав")
+        await state.clear()
+        return
+
+    text = (message.text or "").strip()
+    if text == "⬅️ Назад":
+        async with app_context.session_maker() as session:
+            period = await PeriodService(session).current_cycle()
+            service = StatsService(session, app_context.config)
+            options = await service.violation_counter_reset_options(period.start, period.end)
+            response_text = service.format_violation_counter_reset_options(options)
+        await state.update_data(reset_player_options=options)
+        await state.set_state(ViolationStates.awaiting_reset_player_number)
+        await send_long_message(
+            message,
+            response_text
+            + "\n\nВведите номер игрока, чтобы сбросить ему счетчик нарушений."
+            + "\nИли нажмите ⬅️ Назад.",
+        )
+        return
+
+    data = await state.get_data()
+    active_count = int(data.get("reset_player_active_violations") or 0)
+    if text not in {"1", "2", "3"} or int(text) > active_count:
+        await message.answer("⚠️ Выберите доступное количество нарушений кнопкой: 1, 2 или 3.")
+        return
+
+    amount = int(text)
+    player_tag = data.get("reset_player_tag")
+    player_name = data.get("reset_player_name")
+    if not player_tag or not player_name:
+        await state.clear()
+        await message.answer("⚠️ Сессия устарела. Начните списание заново.")
+        return
+
     try:
         async with app_context.session_maker() as session:
             period = await PeriodService(session).current_cycle()
-            await ViolationCounterResetRepository(session).add_reset(
-                player_tag=selected["player_tag"],
+            remaining = await ActiveViolationCounterService(session).reduce_for_player(
+                player_tag=player_tag,
                 cycle_start=period.start,
+                cycle_end=period.end,
+                amount=amount,
+                admin_telegram_id=message.from_user.id,
                 reset_at=utcnow(),
-                reset_by_admin_telegram_id=message.from_user.id,
             )
             await session.commit()
+            is_registered = await RegistrationService(session, app_context.clash_client).is_registered(message.from_user.id)
         await state.clear()
         await message.answer(
-            "✅ Счетчик нарушений сброшен\n"
-            f"Игрок: {selected['player_name']}\n"
-            "Теперь в текущем цикле активный счетчик для него считается заново."
+            "✅ Активный счетчик нарушений уменьшен\n"
+            f"Игрок: {player_name}\n"
+            f"Списано нарушений: {amount}\n"
+            f"Осталось активных нарушений: {remaining}\n\n"
+            "История нарушений не удалена и доступна по кнопке 🚨 Нарушения.",
+            reply_markup=main_menu(True, is_registered),
         )
     except Exception:
-        logger.exception("Failed to reset player violation counter")
+        logger.exception("Failed to reduce player violation counter")
         await state.clear()
         await message.answer("⚠️ Не удалось сбросить счетчик нарушений. Попробуйте позже.")
 

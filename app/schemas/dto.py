@@ -126,6 +126,9 @@ class WarParticipationExportDTO(BaseModel):
     end_time: datetime | None
     roster_position: int
     attacks: list[AttackExportDTO] = Field(default_factory=list)
+    missed_attack_violation: bool = False
+    missed_attack_violation_code: ViolationCode | None = None
+    missed_attack_violation_reason: str | None = None
 
 
 class CapitalParticipationExportDTO(BaseModel):

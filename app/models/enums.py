@@ -19,6 +19,7 @@ class ViolationCode(str, enum.Enum):
     ABOVE_SELF = "above_self"
     TOO_LOW = "too_low"
     CLAIMED_TARGET = "claimed_target"
+    CWL_MISSED_ATTACK = "cwl_missed_attack"
 
 
 class PeriodKind(str, enum.Enum):

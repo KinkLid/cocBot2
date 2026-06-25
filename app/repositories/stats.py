@@ -200,28 +200,47 @@ class StatsRepository:
         period_start: datetime,
         period_end: datetime,
     ) -> list[tuple[str, str, int | None, int]]:
+        violations_subq = (
+            select(
+                Violation.player_tag.label("player_tag"),
+                func.count(Violation.id).label("violations"),
+            )
+            .where(Violation.detected_at >= period_start, Violation.detected_at <= period_end)
+            .group_by(Violation.player_tag)
+            .subquery()
+        )
+        capital_violations_subq = (
+            select(
+                CapitalRaidViolation.player_tag.label("player_tag"),
+                func.count(CapitalRaidViolation.id).label("violations"),
+            )
+            .join(CapitalRaidWeekend, CapitalRaidWeekend.id == CapitalRaidViolation.weekend_id)
+            .where(
+                CapitalRaidWeekend.clan_tag == clan_tag,
+                CapitalRaidWeekend.end_time >= period_start,
+                CapitalRaidWeekend.end_time <= period_end,
+            )
+            .group_by(CapitalRaidViolation.player_tag)
+            .subquery()
+        )
+        total_violations = func.coalesce(violations_subq.c.violations, 0) + func.coalesce(
+            capital_violations_subq.c.violations, 0
+        )
         stmt = (
             select(
                 PlayerAccount.player_tag,
                 PlayerAccount.name,
                 PlayerAccount.current_clan_rank,
-                func.count(Violation.id).label("violations"),
+                total_violations.label("violations"),
             )
-            .outerjoin(
-                Violation,
-                and_(
-                    Violation.player_tag == PlayerAccount.player_tag,
-                    Violation.detected_at >= period_start,
-                    Violation.detected_at <= period_end,
-                ),
-            )
+            .outerjoin(violations_subq, violations_subq.c.player_tag == PlayerAccount.player_tag)
+            .outerjoin(capital_violations_subq, capital_violations_subq.c.player_tag == PlayerAccount.player_tag)
             .where(
                 PlayerAccount.current_in_clan.is_(True),
                 PlayerAccount.current_clan_tag == clan_tag,
             )
-            .group_by(PlayerAccount.player_tag, PlayerAccount.name, PlayerAccount.current_clan_rank)
             .order_by(
-                func.count(Violation.id).desc(),
+                total_violations.desc(),
                 PlayerAccount.current_clan_rank.asc().nulls_last(),
                 PlayerAccount.name.asc(),
             )

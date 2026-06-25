@@ -7,10 +7,11 @@ import orjson
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import AppYamlConfig
-from app.models.enums import WarType
+from app.models.enums import ViolationCode, WarType
 from app.repositories.capital_raid import CapitalRaidRepository
 from app.repositories.capital_raid_violation import CapitalRaidViolationRepository
 from app.repositories.stats import StatsRepository
+from app.repositories.war import WarRepository
 from app.schemas.dto import AttackExportDTO, CapitalParticipationExportDTO, PlayerExportDTO, WarParticipationExportDTO
 from app.services.capital_raid_contribution import (
     CAPITAL_UNDER_5_ATTACKS,
@@ -26,6 +27,7 @@ class ExportService:
         self.config = config
         self.stats_repo = StatsRepository(session)
         self.stats_service = StatsService(session, config)
+        self.war_repo = WarRepository(session)
         self.capital_repo = CapitalRaidRepository(session)
         self.capital_violation_repo = CapitalRaidViolationRepository(session)
 
@@ -43,6 +45,13 @@ class ExportService:
         capital_violations = await self.capital_violation_repo.list_for_weekend_ids(
             [weekend.id for weekend in capital_weekends]
         )
+        war_ids = list({war.id for _, war in participation_rows})
+        war_violations = await self.war_repo.list_violations_for_war_ids(war_ids)
+        cwl_missed_by_war_player = {
+            (violation.war_id, violation.player_tag): violation
+            for violation in war_violations
+            if violation.code == ViolationCode.CWL_MISSED_ATTACK
+        }
 
         attacks_by_player_and_war: dict[tuple[str, int], list[AttackExportDTO]] = defaultdict(list)
         for attack, war, violation in attacks_rows:
@@ -69,6 +78,7 @@ class ExportService:
 
         participation_by_player: dict[str, list[WarParticipationExportDTO]] = defaultdict(list)
         for participant, war in participation_rows:
+            missed_violation = cwl_missed_by_war_player.get((war.id, participant.player_tag))
             participation_by_player[participant.player_tag].append(
                 WarParticipationExportDTO(
                     war_uid=war.war_uid,
@@ -77,6 +87,9 @@ class ExportService:
                     end_time=war.end_time,
                     roster_position=participant.map_position,
                     attacks=attacks_by_player_and_war.get((participant.player_tag, war.id), []),
+                    missed_attack_violation=missed_violation is not None,
+                    missed_attack_violation_code=missed_violation.code if missed_violation else None,
+                    missed_attack_violation_reason=missed_violation.reason_text if missed_violation else None,
                 )
             )
 
