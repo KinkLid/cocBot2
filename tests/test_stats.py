@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import select
 
-from app.models import Attack, CycleBoundary, PlayerAccount, TelegramPlayerLink, TelegramUser, Violation, War, WarParticipant
+from app.models import Attack, CycleBoundary, PlayerAccount, TelegramPlayerLink, TelegramUser, Violation, ViolationCounterReset, War, WarParticipant
 from app.models.enums import ViolationCode, WarState, WarType
 from app.services.period import PeriodService
 from app.services.stats import StatsService
@@ -195,7 +195,7 @@ async def test_stats_for_custom_period(session, app_yaml_config):
     await seed_stats_data(session)
     stats = await StatsService(session, app_yaml_config).clan_stats(datetime(2026, 4, 1, 0, tzinfo=UTC), datetime(2026, 4, 2, 23, tzinfo=UTC))
     assert "#P8" in stats.text
-    assert "⚠️ Нарушений: 1" in stats.text
+    assert "⚠️ Активных нарушений: 1" in stats.text
 
 
 @pytest.mark.asyncio
@@ -270,7 +270,7 @@ async def test_violations_ranking_current_cycle_basic(session, app_yaml_config):
         datetime(2026, 4, 2, 23, tzinfo=UTC),
     )
     assert "🚨 Нарушения за текущий цикл" in text
-    assert "1. Bravo — 1" in text
+    assert "1. Bravo — всего: 1, активных: 1" in text
     assert "Alpha" not in text
     assert "Ghost" not in text
 
@@ -332,8 +332,38 @@ async def test_violations_ranking_current_cycle_tie_breaker(session, app_yaml_co
         datetime(2026, 4, 2, 23, tzinfo=UTC),
     )
     lines = [line for line in text.splitlines() if line and line[0].isdigit()]
-    assert lines[0].endswith("Bravo — 1")
-    assert lines[1].endswith("Charlie — 1")
+    assert "Bravo — всего: 1, активных: 1" in lines[0]
+    assert "Charlie — всего: 1, активных: 1" in lines[1]
+
+
+@pytest.mark.asyncio
+async def test_violations_ranking_current_cycle_tie_breaker_uses_active_count(session, app_yaml_config):
+    await seed_stats_data(session)
+    p4 = PlayerAccount(
+        player_tag="#P10", name="Charlie", town_hall=16, current_clan_tag="#CLAN",
+        current_clan_name="TestClan", current_clan_rank=3, current_in_clan=True,
+        last_seen_in_clan_at=datetime(2026, 4, 1, tzinfo=UTC), created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 4, 1, tzinfo=UTC),
+    )
+    session.add(p4)
+    await session.flush()
+    war = await session.scalar(select(War).where(War.war_type == WarType.REGULAR))
+    for order, detected_at in [(90, datetime(2026, 4, 1, 16, tzinfo=UTC)), (91, datetime(2026, 4, 1, 17, tzinfo=UTC))]:
+        attack = Attack(war_id=war.id, attacker_player_id=p4.id, attacker_tag="#P10", attacker_name="Charlie", attacker_position=3, attacker_town_hall=16, defender_tag=f"#E{order}", defender_name="Enemy", defender_position=10, defender_town_hall=16, stars=1, destruction=50, attack_order=order, observed_at=detected_at)
+        session.add(attack)
+        await session.flush()
+        session.add(Violation(attack_id=attack.id, war_id=war.id, player_tag="#P10", code=ViolationCode.TOO_LOW, reason_text="tie", player_position=3, target_position=10, detected_at=detected_at))
+    session.add(ViolationCounterReset(player_tag="#P10", cycle_start=datetime(2026, 4, 1, 0, tzinfo=UTC), reset_at=datetime(2026, 4, 1, 18, tzinfo=UTC), reset_by_admin_telegram_id=1, reset_amount=1))
+    await session.commit()
+
+    rows = await StatsService(session, app_yaml_config).violations_ranking_current_cycle_data(
+        datetime(2026, 4, 1, 0, tzinfo=UTC), datetime(2026, 4, 2, 23, tzinfo=UTC)
+    )
+
+    assert [(row["player_name"], row["violations"], row["active_violations"]) for row in rows[:2]] == [
+        ("Charlie", 2, 1),
+        ("Bravo", 1, 1),
+    ]
 
 
 @pytest.mark.asyncio

@@ -600,8 +600,9 @@ async def reset_violation_counter_start(
     await send_long_message(
         message,
         text
-        + "\n\nВведите номер игрока, чтобы сбросить ему счетчик нарушений."
+        + "\n\nВведите номер игрока, для которого нужно уменьшить активный счетчик."
         + "\nИли нажмите ⬅️ Назад.",
+        reply_markup=back_keyboard(),
     )
 
 
@@ -672,13 +673,25 @@ async def reset_violation_counter_amount_selected(
             service = StatsService(session, app_context.config)
             options = await service.violation_counter_reset_options(period.start, period.end)
             response_text = service.format_violation_counter_reset_options(options)
+        if not options:
+            await state.clear()
+            async with app_context.session_maker() as session:
+                is_registered = await RegistrationService(
+                    session, app_context.clash_client
+                ).is_registered(message.from_user.id)
+            await message.answer(
+                "✅ Нет игроков с активными нарушениями для списания.",
+                reply_markup=main_menu(is_admin=True, is_registered=is_registered),
+            )
+            return
         await state.update_data(reset_player_options=options)
         await state.set_state(ViolationStates.awaiting_reset_player_number)
         await send_long_message(
             message,
             response_text
-            + "\n\nВведите номер игрока, чтобы сбросить ему счетчик нарушений."
+            + "\n\nВведите номер игрока, для которого нужно уменьшить активный счетчик."
             + "\nИли нажмите ⬅️ Назад.",
+            reply_markup=back_keyboard(),
         )
         return
 
@@ -718,10 +731,18 @@ async def reset_violation_counter_amount_selected(
             "История нарушений не удалена и доступна по кнопке 🚨 Нарушения.",
             reply_markup=main_menu(True, is_registered),
         )
+    except ValueError as exc:
+        await state.clear()
+        async with app_context.session_maker() as session:
+            is_registered = await RegistrationService(session, app_context.clash_client).is_registered(message.from_user.id)
+        await message.answer(
+            f"⚠️ {exc}",
+            reply_markup=main_menu(True, is_registered),
+        )
     except Exception:
         logger.exception("Failed to reduce player violation counter")
         await state.clear()
-        await message.answer("⚠️ Не удалось сбросить счетчик нарушений. Попробуйте позже.")
+        await message.answer("⚠️ Не удалось изменить счетчик нарушений. Попробуйте позже.")
 
 
 @router.message(ViolationStates.awaiting_violation_player_number)
