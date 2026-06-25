@@ -53,6 +53,18 @@ logger = logging.getLogger(__name__)
 
 CONTRIBUTION_BUILD_ERROR = "⚠️ Не удалось построить отчет по общему вкладу. Попробуйте позже."
 CONTRIBUTION_CYCLE_DATA_ERROR = "⚠️ Общий вклад пока недоступен: в текущем цикле еще недостаточно данных."
+PREVIOUS_CONTRIBUTION_UNAVAILABLE_ERROR = (
+    "⚠️ Общий вклад за прошлый цикл недоступен: "
+    "в базе недостаточно границ циклов ЛВК."
+)
+PREVIOUS_CONTRIBUTION_DATA_ERROR = (
+    "⚠️ Общий вклад за прошлый цикл недоступен: "
+    "за прошлый цикл недостаточно данных."
+)
+PREVIOUS_CONTRIBUTION_BUILD_ERROR = (
+    "⚠️ Не удалось построить отчет по общему вкладу "
+    "за прошлый цикл. Попробуйте позже."
+)
 
 
 def _ensure_admin(app_context: AppContext, telegram_id: int) -> None:
@@ -299,6 +311,44 @@ async def dev_contribution(message: Message, app_context: AppContext) -> None:
     except Exception:
         logger.exception("Failed to build dev contribution report")
         await message.answer(CONTRIBUTION_BUILD_ERROR)
+
+
+@router.message(F.text == "📚 Вклад прошлого цикла")
+async def previous_cycle_contribution(
+    message: Message,
+    app_context: AppContext,
+) -> None:
+    try:
+        async with app_context.session_maker() as session:
+            period = await PeriodService(session).previous_cycle()
+            service = DevContributionService(session, app_context.config)
+            ranking = await service.build_contribution_ranking(
+                period,
+                include_historical_members=True,
+            )
+            text = service.format_contribution_ranking(
+                ranking,
+                title="🏆 Общий вклад за прошлый цикл",
+                period=period,
+            )
+
+        await send_long_message(message, text)
+    except ValueError as exc:
+        if "Прошлый цикл недоступен" in str(exc):
+            await message.answer(PREVIOUS_CONTRIBUTION_UNAVAILABLE_ERROR)
+            return
+        logger.exception(
+            "Failed to build previous cycle contribution due to invalid period data"
+        )
+        await message.answer(PREVIOUS_CONTRIBUTION_DATA_ERROR)
+    except ContributionDataUnavailableError:
+        await message.answer(PREVIOUS_CONTRIBUTION_DATA_ERROR)
+    except TypeError:
+        logger.exception("Failed to build previous cycle contribution due to malformed data")
+        await message.answer(PREVIOUS_CONTRIBUTION_DATA_ERROR)
+    except Exception:
+        logger.exception("Failed to build previous cycle contribution report")
+        await message.answer(PREVIOUS_CONTRIBUTION_BUILD_ERROR)
 
 
 @router.message(F.text == "📋 Мой вклад")

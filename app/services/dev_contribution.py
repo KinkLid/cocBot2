@@ -90,8 +90,12 @@ class DevContributionService:
         self.repo = StatsRepository(session)
         self.active_violation_counter = ActiveViolationCounterService(session)
 
-    async def get_total_membership_duration(self, player_id: int) -> timedelta | None:
-        now_utc = _normalize_utc(utcnow())
+    async def get_total_membership_duration(
+        self,
+        player_id: int,
+        as_of: datetime | None = None,
+    ) -> timedelta | None:
+        now_utc = _normalize_utc(utcnow() if as_of is None else as_of)
         membership_query: Select[tuple[ClanMembershipHistory]] = (
             select(ClanMembershipHistory)
             .where(
@@ -109,8 +113,10 @@ class DevContributionService:
                 if joined_at is None:
                     continue
                 joined_at_utc = _normalize_utc(joined_at)
+                if joined_at_utc > now_utc:
+                    continue
                 left_at = membership.left_at
-                end_at_utc = now_utc if left_at is None else _normalize_utc(left_at)
+                end_at_utc = now_utc if left_at is None else min(_normalize_utc(left_at), now_utc)
                 if end_at_utc <= joined_at_utc:
                     continue
                 total += end_at_utc - joined_at_utc
@@ -129,8 +135,12 @@ class DevContributionService:
             return None
         return max(timedelta(0), now_utc - _normalize_utc(fallback_membership.joined_at))
 
-    async def is_newcomer(self, player_id: int) -> bool:
-        total_duration = await self.get_total_membership_duration(player_id)
+    async def is_newcomer(
+        self,
+        player_id: int,
+        as_of: datetime | None = None,
+    ) -> bool:
+        total_duration = await self.get_total_membership_duration(player_id, as_of)
         if total_duration is None:
             return False
         return total_duration < timedelta(days=7)
@@ -140,11 +150,13 @@ class DevContributionService:
         period: Any,
         *,
         require_attacks: bool = True,
+        include_historical_members: bool = False,
     ) -> ContributionCalculation:
         stats_rows = await self.repo.aggregated_player_stats(
             clan_tag=self.config.main_clan_tag,
             period_start=period.start,
             period_end=period.end,
+            include_historical_members=include_historical_members,
         )
         if not stats_rows:
             raise ContributionDataUnavailableError(
@@ -315,11 +327,23 @@ class DevContributionService:
             donations_by_tag=donations_by_tag,
         )
 
-    async def build_contribution_ranking(self, period: Any) -> list[ContributionRankingRow]:
-        calculation = await self.build_contribution_calculation(period)
+    async def build_contribution_ranking(
+        self,
+        period: Any,
+        *,
+        include_historical_members: bool = False,
+    ) -> list[ContributionRankingRow]:
+        calculation = await self.build_contribution_calculation(
+            period,
+            include_historical_members=include_historical_members,
+        )
         ranking: list[ContributionRankingRow] = []
         for row in calculation.stats_rows:
-            newcomer = await self.is_newcomer(row.player_id) if hasattr(row, "player_id") else False
+            newcomer = (
+                await self.is_newcomer(row.player_id, as_of=period.end)
+                if hasattr(row, "player_id")
+                else False
+            )
             ranking.append(
                 ContributionRankingRow(
                     player_tag=row.player_tag,
@@ -337,10 +361,19 @@ class DevContributionService:
             )
         return sorted(ranking, key=lambda x: (-x.score, x.player_name.casefold(), x.player_tag))
 
-    def format_contribution_ranking(self, ranking: list[ContributionRankingRow]) -> str:
+    def format_contribution_ranking(
+        self,
+        ranking: list[ContributionRankingRow],
+        *,
+        title: str = "🏆 Общий вклад",
+        period: Any | None = None,
+    ) -> str:
         if not ranking:
             raise ContributionDataUnavailableError("⚠️ Общий вклад пока нельзя посчитать: в текущем цикле еще нет данных по атакам.")
-        lines = ["🏆 Общий вклад", ""]
+        lines = [title]
+        if period is not None:
+            lines.append(f"📅 {period.start:%d.%m.%Y} — {period.end:%d.%m.%Y}")
+        lines.append("")
         for idx, row in enumerate(ranking, 1):
             violation_suffix = " ❌" if row.active_violations >= 3 else ""
             newcomer_suffix = " 🆕 новенький" if row.newcomer else ""
