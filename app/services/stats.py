@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import AppYamlConfig
-from app.models.enums import WarType
+from app.models.enums import ViolationCode, WarType
 from app.repositories.capital_raid_violation import CapitalRaidViolationRepository
 from app.repositories.stats import StatsRepository
 from app.repositories.war import WarRepository
@@ -54,7 +54,7 @@ class StatsService:
             wars=row.wars,
             attacks=row.attacks,
             stars=row.stars,
-            violations=row.violations,
+            violations=await self.active_violation_counter.count_for_player(row.player_tag, period_start, period_end),
             place=contribution_place,
             clan_rank=row.clan_rank,
         )
@@ -94,6 +94,9 @@ class StatsService:
         else:
             sorted_rows = sorted(rows, key=lambda item: (item.clan_rank or 10_000, item.player_name))
 
+        active_counts = await self.active_violation_counter.counts_for_players(
+            [row.player_tag for row in sorted_rows], period_start, period_end
+        )
         dto_rows = [
             PlayerStatsDTO(
                 player_tag=row.player_tag,
@@ -105,7 +108,7 @@ class StatsService:
                 wars=row.wars,
                 attacks=row.attacks,
                 stars=row.stars,
-                violations=row.violations,
+                violations=active_counts.get(row.player_tag, 0),
                 place=places[row.player_tag],
                 clan_rank=row.clan_rank,
             )
@@ -139,8 +142,7 @@ class StatsService:
             f"🗡 Атак: {row.attacks}",
             f"⭐ Звёзд: {row.stars}",
         ]
-        if row.violations > 0:
-            parts.append(f"⚠️ Нарушений: {row.violations}")
+        parts.append(f"⚠️ Активных нарушений: {row.violations}")
         parts.append(f"🏅 Место в клане: {row.place}")
         return "\n".join(parts)
 
@@ -151,21 +153,26 @@ class StatsService:
             period_start=period_start,
             period_end=period_end,
         )
-        player_tags = [player_tag for player_tag, _, _, _ in rows]
+        player_tags = [player_tag for player_tag, _, _, violations in rows if violations > 0]
         active_counts = await self.active_violation_counter.counts_for_players(
             player_tags, period_start, period_end
         )
         ranked = sorted(
             (
-                (player_tag, player_name, clan_rank, active_counts.get(player_tag, 0))
-                for player_tag, player_name, clan_rank, _ in rows
-                if active_counts.get(player_tag, 0) > 0
+                (player_tag, player_name, clan_rank, violations, active_counts.get(player_tag, 0))
+                for player_tag, player_name, clan_rank, violations in rows
+                if violations > 0
             ),
             key=lambda row: (-row[3], row[2] or 10_000, row[1]),
         )
         return [
-            {"player_tag": player_tag, "player_name": player_name, "violations": violations}
-            for player_tag, player_name, _, violations in ranked
+            {
+                "player_tag": player_tag,
+                "player_name": player_name,
+                "violations": violations,
+                "active_violations": active_violations,
+            }
+            for player_tag, player_name, _, violations, active_violations in ranked
         ]
 
     async def violation_counter_reset_options(
@@ -189,6 +196,7 @@ class StatsService:
         return [
             {"player_tag": player_tag, "player_name": player_name, "violations": violations}
             for player_tag, player_name, _, violations in ordered
+            if violations > 0
         ]
 
     def format_violation_counter_reset_options(
@@ -208,7 +216,10 @@ class StatsService:
         if not ranked:
             return "✅ За текущий цикл нарушений пока нет."
         lines = ["🚨 Нарушения за текущий цикл", ""]
-        lines.extend(f"{idx}. {row['player_name']} — {row['violations']}" for idx, row in enumerate(ranked, 1))
+        lines.extend(
+            f"{idx}. {row['player_name']} — всего: {row['violations']}, активных: {row['active_violations']}"
+            for idx, row in enumerate(ranked, 1)
+        )
         return "\n".join(lines)
 
     async def build_player_violations_report(self, period_start, period_end, player_tag: str, player_name: str) -> str:
@@ -224,17 +235,22 @@ class StatsService:
         entries: list[tuple[datetime, list[str]]] = []
         for violation, attack, war in war_rows:
             war_type = "ЛВК" if war.war_type == WarType.CWL else "КВ"
-            entries.append(
-                (
-                    violation.detected_at,
-                    [
-                        f"{violation.detected_at:%Y-%m-%d %H:%M} | {war_type} | "
-                        f"{attack.attacker_position} -> {attack.defender_position}",
-                        f"Код: {violation.code.value}",
-                        f"Причина: {violation.reason_text}",
-                    ],
-                )
-            )
+            if violation.code == ViolationCode.CWL_MISSED_ATTACK and attack is None:
+                detail_lines = [
+                    f"{violation.detected_at:%Y-%m-%d %H:%M} | ЛВК | пропуск атаки",
+                    f"Код: {violation.code.value}",
+                    f"Причина: {violation.reason_text}",
+                    f"Война: против {war.opponent_name}",
+                ]
+            else:
+                assert attack is not None
+                detail_lines = [
+                    f"{violation.detected_at:%Y-%m-%d %H:%M} | {war_type} | "
+                    f"{attack.attacker_position} -> {attack.defender_position}",
+                    f"Код: {violation.code.value}",
+                    f"Причина: {violation.reason_text}",
+                ]
+            entries.append((violation.detected_at, detail_lines))
         for violation, weekend in capital_rows:
             assert weekend.end_time is not None
             entries.append(
@@ -260,6 +276,7 @@ class StatsService:
 
         lines = [
             f"🚨 Нарушения игрока: {player_name}",
+            f"Всего нарушений за цикл: {len(entries)}",
             f"Активный счетчик нарушений: {active_count}",
             "",
         ]

@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import Attack, CycleBoundary, Violation, War, WarParticipant
-from app.models.enums import WarType
+from app.models.enums import ViolationCode, WarType
 
 
 class WarRepository:
@@ -96,18 +96,46 @@ class WarRepository:
         return list(result.all())
 
 
-    async def list_player_violations_in_period(self, clan_tag: str, player_tag: str, period_start, period_end) -> list[tuple[Violation, Attack, War]]:
+    async def list_player_violations_in_period(self, clan_tag: str, player_tag: str, period_start, period_end) -> list[tuple[Violation, Attack | None, War]]:
         result = await self.session.execute(
             select(Violation, Attack, War)
-            .join(Attack, Violation.attack_id == Attack.id)
             .join(War, Violation.war_id == War.id)
+            .outerjoin(Attack, Violation.attack_id == Attack.id)
             .where(
                 War.clan_tag == clan_tag,
                 Violation.player_tag == player_tag,
                 Violation.detected_at >= period_start,
                 Violation.detected_at <= period_end,
             )
-            .order_by(Violation.detected_at.asc())
+            .order_by(Violation.detected_at.asc(), Violation.id.asc())
+        )
+        return list(result.all())
+
+
+    async def get_cwl_missed_attack_violation(
+        self,
+        war_id: int,
+        player_tag: str,
+    ) -> Violation | None:
+        result = await self.session.execute(
+            select(Violation).where(
+                Violation.war_id == war_id,
+                Violation.player_tag == player_tag,
+                Violation.code == ViolationCode.CWL_MISSED_ATTACK,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def list_violations_for_war_ids(
+        self,
+        war_ids: list[int],
+    ) -> list[Violation]:
+        if not war_ids:
+            return []
+        result = await self.session.scalars(
+            select(Violation)
+            .where(Violation.war_id.in_(war_ids))
+            .order_by(Violation.war_id.asc(), Violation.detected_at.asc(), Violation.id.asc())
         )
         return list(result.all())
 

@@ -7,7 +7,7 @@ from app.clients.clash import ClashApiClient
 from app.config.settings import AppYamlConfig
 from app.domain.violation_rules import evaluate_attack_violation
 from app.models import Attack, Violation, War, WarParticipant
-from app.models.enums import WarState, WarType
+from app.models.enums import ViolationCode, WarState, WarType
 from app.repositories.player_account import PlayerAccountRepository
 from app.repositories.war import WarRepository
 from app.schemas.dto import CWLGroupDTO, WarDTO
@@ -187,7 +187,70 @@ class WarSyncService:
                     attack,
                     defender_positions=self._defender_positions_from_members(enemy_side.members),
                 )
+        await self._reconcile_cwl_missed_attack_violations(
+            war,
+            own_side.members,
+        )
         return war
+
+
+    async def _reconcile_cwl_missed_attack_violations(
+        self,
+        war: War,
+        own_members: list,
+    ) -> None:
+        if war.is_friendly is True or war.war_type != WarType.CWL or war.state != WarState.WAR_ENDED:
+            return
+
+        for member in own_members:
+            existing = await self.wars.get_cwl_missed_attack_violation(war.id, member.tag)
+            if member.attacks:
+                if existing is not None:
+                    await self.wars.delete_violation(existing)
+                continue
+            if existing is not None:
+                continue
+
+            detected_at = war.end_time or utcnow()
+            violation = await self.wars.add_violation(
+                Violation(
+                    attack_id=None,
+                    war_id=war.id,
+                    player_tag=member.tag,
+                    code=ViolationCode.CWL_MISSED_ATTACK,
+                    reason_text="Не использовал атаку в ЛВК",
+                    player_position=member.map_position,
+                    target_position=None,
+                    detected_at=detected_at,
+                    is_manual=False,
+                )
+            )
+            await self.session.flush()
+            current_cycle = await self.period_service.current_cycle(detected_at)
+            violation_number = await self.active_violation_counter.count_for_player(
+                member.tag, current_cycle.start, current_cycle.end
+            )
+            round_number = war.round_index + 1 if war.round_index is not None else "—"
+            text = (
+                f"🚨 Нарушение\n"
+                f"Игрок: {member.name} {member.tag}\n"
+                f"Война: ЛВК против {war.opponent_name}\n"
+                f"Раунд: {round_number}\n"
+                f"Время фиксации: {detected_at:%Y-%m-%d %H:%M:%S UTC}\n"
+                f"Нарушение №{violation_number}\n"
+                f"Причина: Не использовал атаку в ЛВК"
+            )
+            await self.notifier.notify_once(
+                event_key=f"violation:cwl_missed_attack:{war.id}:{member.tag}",
+                event_type="violation",
+                text=text,
+                now=detected_at,
+            )
+            logger.info(
+                "CWL missed attack violation recorded: war_id=%s player_tag=%s",
+                war.id,
+                member.tag,
+            )
 
     @staticmethod
     def _defender_positions_from_members(members) -> list[int]:

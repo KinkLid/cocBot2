@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import ViolationCounterReset
@@ -18,12 +18,14 @@ class ViolationCounterResetRepository:
         cycle_start: datetime,
         reset_at: datetime,
         reset_by_admin_telegram_id: int,
+        reset_amount: int,
     ) -> ViolationCounterReset:
         reset = ViolationCounterReset(
             player_tag=player_tag,
             cycle_start=cycle_start,
             reset_at=reset_at,
             reset_by_admin_telegram_id=reset_by_admin_telegram_id,
+            reset_amount=reset_amount,
         )
         self.session.add(reset)
         await self.session.flush()
@@ -46,20 +48,28 @@ class ViolationCounterResetRepository:
         )
         return result.scalar_one_or_none()
 
-    async def latest_resets_for_players(
-        self, player_tags: list[str], cycle_start: datetime
-    ) -> dict[str, datetime]:
+    async def list_for_players(
+        self,
+        player_tags: list[str],
+        cycle_start: datetime,
+    ) -> list[ViolationCounterReset]:
         if not player_tags:
-            return {}
-        rows = await self.session.execute(
-            select(
-                ViolationCounterReset.player_tag,
-                func.max(ViolationCounterReset.reset_at),
-            )
+            return []
+        result = await self.session.scalars(
+            select(ViolationCounterReset)
             .where(
                 ViolationCounterReset.player_tag.in_(player_tags),
                 ViolationCounterReset.cycle_start == cycle_start,
             )
-            .group_by(ViolationCounterReset.player_tag)
+            .order_by(ViolationCounterReset.reset_at.asc(), ViolationCounterReset.id.asc())
         )
-        return {player_tag: reset_at for player_tag, reset_at in rows.all()}
+        return list(result.all())
+
+    async def latest_resets_for_players(
+        self, player_tags: list[str], cycle_start: datetime
+    ) -> dict[str, datetime]:
+        resets = await self.list_for_players(player_tags, cycle_start)
+        latest: dict[str, datetime] = {}
+        for reset in resets:
+            latest[reset.player_tag] = reset.reset_at
+        return latest

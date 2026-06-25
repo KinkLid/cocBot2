@@ -39,3 +39,16 @@ def back_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[[KeyboardButton(text="⬅️ Назад")]],
         resize_keyboard=True,
     )
+
+
+def violation_reset_amount_keyboard(
+    active_count: int,
+) -> ReplyKeyboardMarkup:
+    amount = min(max(active_count, 1), 3)
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=str(value)) for value in range(1, amount + 1)],
+            [KeyboardButton(text="⬅️ Назад")],
+        ],
+        resize_keyboard=True,
+    )
