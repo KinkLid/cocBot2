@@ -359,3 +359,181 @@ async def test_json_export_marks_cwl_missed_attack_violation_without_separate_se
     assert bravo_war["missed_attack_violation"] is False
     assert bravo_war["missed_attack_violation_code"] is None
     assert bravo_war["missed_attack_violation_reason"] is None
+
+
+def _keyboard_rows(markup):
+    return [[button.text for button in row] for row in markup.keyboard]
+
+
+def test_all_time_violations_button_is_admin_only():
+    admin_rows = _keyboard_rows(main_menu(is_admin=True, is_registered=True))
+    user_rows = _keyboard_rows(main_menu(is_admin=False, is_registered=True))
+    assert ["🗄 Все нарушения"] in admin_rows
+    assert all("🗄 Все нарушения" not in row for row in user_rows)
+    violation_idx = admin_rows.index(["🚨 Нарушения", "♻️ Сбросить счетчик нарушений"])
+    all_idx = admin_rows.index(["🗄 Все нарушения"])
+    manual_idx = admin_rows.index(["🚩 Чужой флажок", "➕ Начислить баллы"])
+    assert violation_idx < all_idx < manual_idx
+
+
+@pytest.mark.asyncio
+async def test_all_time_violations_is_admin_only(app_context):
+    from app.bot.handlers.admin import all_time_violations
+    state = FakeState()
+    message = FakeMessage(text="🗄 Все нарушения", user_id=999)
+    await all_time_violations(message, state, app_context)
+    assert message.answer.await_args.args[0] == "⛔ Недостаточно прав"
+    assert state.state is None
+
+
+@pytest.mark.asyncio
+async def test_all_time_violations_empty_database_does_not_start_fsm(app_context, monkeypatch):
+    from app.bot.handlers.admin import all_time_violations
+
+    async def fake_data(self):
+        return []
+
+    async def fake_text(self):
+        return "✅ В базе пока нет сохранённых нарушений."
+
+    monkeypatch.setattr(StatsService, "all_time_violations_data", fake_data)
+    monkeypatch.setattr(StatsService, "all_time_violations", fake_text)
+    state = FakeState()
+    await state.set_state(ViolationStates.awaiting_violation_player_number)
+    message = FakeMessage(text="🗄 Все нарушения", user_id=1)
+    await all_time_violations(message, state, app_context)
+    assert message.answer.await_args.args[0] == "✅ В базе пока нет сохранённых нарушений."
+    assert state.state is None
+
+
+@pytest.mark.asyncio
+async def test_all_time_violations_sets_separate_state(app_context, monkeypatch):
+    from app.bot.handlers.admin import all_time_violations
+
+    options = [{"player_tag": "#P1", "player_name": "Alpha", "violations": 2, "current_in_clan": True}]
+
+    async def fake_data(self):
+        return options
+
+    async def fake_text(self):
+        return "🗄 Все нарушения за всё время\n\n1. Alpha — всего: 2"
+
+    monkeypatch.setattr(StatsService, "all_time_violations_data", fake_data)
+    monkeypatch.setattr(StatsService, "all_time_violations", fake_text)
+    state = FakeState()
+    message = FakeMessage(text="🗄 Все нарушения", user_id=1)
+    await all_time_violations(message, state, app_context)
+    assert state.state == str(ViolationStates.awaiting_all_violations_player_number)
+    assert (await state.get_data())["all_violation_player_options"] == options
+    assert "⬅️ Назад" in str(message.answer.await_args.kwargs["reply_markup"].keyboard[0][0].text)
+
+
+@pytest.mark.asyncio
+async def test_all_time_violations_does_not_call_period_service(app_context, monkeypatch):
+    from app.bot.handlers.admin import all_time_violations
+
+    async def fail(*args, **kwargs):
+        raise AssertionError("PeriodService must not be used")
+
+    async def fake_data(self):
+        return []
+
+    async def fake_text(self):
+        return "✅ В базе пока нет сохранённых нарушений."
+
+    monkeypatch.setattr(PeriodService, "current_cycle", fail)
+    monkeypatch.setattr(PeriodService, "previous_cycle", fail)
+    monkeypatch.setattr(StatsService, "all_time_violations_data", fake_data)
+    monkeypatch.setattr(StatsService, "all_time_violations", fake_text)
+    message = FakeMessage(text="🗄 Все нарушения", user_id=1)
+    await all_time_violations(message, FakeState(), app_context)
+    assert message.answer.await_args.args[0].startswith("✅")
+
+
+@pytest.mark.asyncio
+async def test_all_time_violation_player_invalid_number_keeps_state(app_context):
+    from app.bot.handlers.admin import all_time_violation_player_selected
+    state = FakeState()
+    await state.set_state(ViolationStates.awaiting_all_violations_player_number)
+    await state.update_data(all_violation_player_options=[{"player_tag": "#P1", "player_name": "Alpha"}])
+    message = FakeMessage(text="abc", user_id=1)
+    await all_time_violation_player_selected(message, state, app_context)
+    assert message.answer.await_args.args[0] == "⚠️ Введите номер игрока из списка или нажмите ⬅️ Назад."
+    assert state.state == str(ViolationStates.awaiting_all_violations_player_number)
+
+
+@pytest.mark.asyncio
+async def test_all_time_violation_player_out_of_range_keeps_state(app_context):
+    from app.bot.handlers.admin import all_time_violation_player_selected
+    state = FakeState()
+    await state.set_state(ViolationStates.awaiting_all_violations_player_number)
+    await state.update_data(all_violation_player_options=[{"player_tag": "#P1", "player_name": "Alpha"}])
+    message = FakeMessage(text="2", user_id=1)
+    await all_time_violation_player_selected(message, state, app_context)
+    assert message.answer.await_args.args[0] == "⚠️ Нет игрока с таким номером."
+    assert state.state == str(ViolationStates.awaiting_all_violations_player_number)
+
+
+@pytest.mark.asyncio
+async def test_all_time_violation_player_back_returns_admin_menu(app_context):
+    from app.bot.handlers.admin import all_time_violation_player_selected
+    state = FakeState()
+    await state.set_state(ViolationStates.awaiting_all_violations_player_number)
+    message = FakeMessage(text="⬅️ Назад", user_id=1)
+    await all_time_violation_player_selected(message, state, app_context)
+    assert state.state is None
+    assert message.answer.await_args.args[0] == "Главное меню"
+    assert "🗄 Все нарушения" in str(message.answer.await_args.kwargs["reply_markup"].keyboard)
+
+
+@pytest.mark.asyncio
+async def test_all_time_violation_player_selection_sends_full_report(app_context, monkeypatch):
+    from app.bot.handlers import admin as admin_module
+    from app.bot.handlers.admin import all_time_violation_player_selected
+    called = {}
+
+    async def fake_report(self, *, player_tag, player_name):
+        called["args"] = (player_tag, player_name)
+        return "FULL REPORT"
+
+    sent = {}
+
+    async def fake_send(message, text, **kwargs):
+        sent["text"] = text
+
+    monkeypatch.setattr(StatsService, "build_player_all_time_violations_report", fake_report)
+    monkeypatch.setattr(admin_module, "send_long_message", fake_send)
+    state = FakeState()
+    await state.set_state(ViolationStates.awaiting_all_violations_player_number)
+    await state.update_data(all_violation_player_options=[{"player_tag": "#P1", "player_name": "Alpha"}])
+    message = FakeMessage(text="1", user_id=1)
+    await all_time_violation_player_selected(message, state, app_context)
+    assert called["args"] == ("#P1", "Alpha")
+    assert sent["text"] == "FULL REPORT"
+    assert state.state is None
+
+
+@pytest.mark.asyncio
+async def test_current_cycle_violations_flow_is_unchanged(app_context, monkeypatch):
+    called = {"current": 0}
+
+    async def fake_current_cycle(self):
+        called["current"] += 1
+        return SimpleNamespace(start=datetime(2026, 4, 1, tzinfo=UTC), end=datetime(2026, 4, 2, tzinfo=UTC))
+
+    async def fake_data(self, period_start, period_end):
+        return [{"player_tag": "#P1", "player_name": "Alpha", "violations": 1, "active_violations": 1}]
+
+    async def fake_text(self, period_start, period_end):
+        return "🚨 Нарушения за текущий цикл"
+
+    monkeypatch.setattr(PeriodService, "current_cycle", fake_current_cycle)
+    monkeypatch.setattr(StatsService, "violations_ranking_current_cycle_data", fake_data)
+    monkeypatch.setattr(StatsService, "violations_ranking_current_cycle", fake_text)
+    state = FakeState()
+    await current_cycle_violations(FakeMessage(text="🚨 Нарушения", user_id=1), state, app_context)
+    data = await state.get_data()
+    assert called["current"] == 1
+    assert state.state == str(ViolationStates.awaiting_violation_player_number)
+    assert "violation_player_options" in data
+    assert "all_violation_player_options" not in data

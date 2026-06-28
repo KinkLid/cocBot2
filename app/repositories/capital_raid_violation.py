@@ -44,6 +44,29 @@ class CapitalRaidViolationRepository:
         )
         return list(result.all())
 
+    async def list_for_player_all_time(
+        self,
+        *,
+        clan_tag: str,
+        player_tag: str,
+    ) -> list[tuple[CapitalRaidViolation, CapitalRaidWeekend]]:
+        result = await self.session.execute(
+            select(CapitalRaidViolation, CapitalRaidWeekend)
+            .join(
+                CapitalRaidWeekend,
+                CapitalRaidWeekend.id == CapitalRaidViolation.weekend_id,
+            )
+            .where(
+                CapitalRaidViolation.player_tag == player_tag,
+                CapitalRaidWeekend.clan_tag == clan_tag,
+            )
+            .order_by(
+                CapitalRaidWeekend.end_time.asc().nulls_last(),
+                CapitalRaidViolation.id.asc(),
+            )
+        )
+        return list(result.all())
+
     async def aggregated_current_cycle(self, clan_tag, period_start, period_end) -> dict[str, int]:
         result = await self.session.execute(
             select(CapitalRaidViolation.player_tag, func.count(CapitalRaidViolation.id))

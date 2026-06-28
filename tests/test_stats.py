@@ -444,3 +444,187 @@ async def test_build_player_violations_report_formats_details_and_claimed_target
     assert "2026-05-16 09:52 | ЛВК | 10 -> 23" in text
     assert "Код: claimed_target" in text
     assert "Причина: Атака по чужому флажку" in text
+
+
+def _player(tag, name, rank=1, in_clan=True):
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    return PlayerAccount(player_tag=tag, name=name, town_hall=16, current_clan_tag="#CLAN" if in_clan else None, current_clan_name="Clan" if in_clan else None, current_clan_rank=rank, current_in_clan=in_clan, last_seen_in_clan_at=now, first_absent_at=None if in_clan else now, created_at=now, updated_at=now)
+
+
+def _war(uid, clan="#CLAN", when=datetime(2026, 4, 1, 12, tzinfo=UTC), war_type=WarType.REGULAR):
+    return War(war_uid=uid, clan_tag=clan, clan_name="Clan", opponent_tag="#E", opponent_name="Enemy", war_type=war_type, state=WarState.WAR_ENDED, league_group_id=None, cwl_season=None, round_index=None, team_size=15, is_friendly=False, start_time=when, end_time=when, preparation_start_time=when, source_payload={})
+
+
+async def _add_war_violation(session, player, war, when, code=ViolationCode.TOO_LOW, attack=True, reason="reason"):
+    session.add(war)
+    await session.flush()
+    attack_obj = None
+    if attack:
+        attack_obj = Attack(war_id=war.id, attacker_player_id=player.id, attacker_tag=player.player_tag, attacker_name=player.name, attacker_position=5, attacker_town_hall=16, defender_tag="#E1", defender_name="Enemy", defender_position=8, defender_town_hall=16, stars=1, destruction=50, attack_order=1, observed_at=when)
+        session.add(attack_obj)
+        await session.flush()
+    violation = Violation(attack_id=attack_obj.id if attack_obj else None, war_id=war.id, player_tag=player.player_tag, code=code, reason_text=reason, player_position=5, target_position=8, detected_at=when)
+    session.add(violation)
+    await session.flush()
+    return violation
+
+
+async def _add_capital_violation(session, player, when, clan="#CLAN", end_time_marker="use"):
+    from app.models import CapitalRaidViolation, CapitalRaidWeekend
+    end_time = when if end_time_marker == "use" else None
+    weekend = CapitalRaidWeekend(clan_tag=clan, raid_season_id=f"raid-{player.player_tag}-{when.timestamp()}-{clan}", state="ended", start_time=when, end_time=end_time, total_loot=0, total_attacks=0, enemy_districts_destroyed=0, offensive_reward=0, defensive_reward=0, processed_at=when)
+    session.add(weekend)
+    await session.flush()
+    violation = CapitalRaidViolation(weekend_id=weekend.id, player_tag=player.player_tag, player_name=player.name, code="capital_missed_attacks", reason_text="capital reason", attacks=1, detected_at=when)
+    session.add(violation)
+    await session.flush()
+    return violation
+
+
+@pytest.mark.asyncio
+async def test_all_time_violations_include_all_cycles(session, app_yaml_config):
+    p = _player("#P1", "Alpha")
+    session.add(p); await session.flush()
+    await _add_war_violation(session, p, _war("w1", when=datetime(2026, 3, 1, tzinfo=UTC)), datetime(2026, 3, 1, tzinfo=UTC))
+    await _add_war_violation(session, p, _war("w2", when=datetime(2026, 4, 1, tzinfo=UTC)), datetime(2026, 4, 1, tzinfo=UTC))
+    await session.commit()
+    rows = await StatsService(session, app_yaml_config).all_time_violations_data()
+    assert rows[0]["violations"] == 2
+
+
+@pytest.mark.asyncio
+async def test_all_time_violations_include_war_capital_and_cwl_miss(session, app_yaml_config):
+    p = _player("#P1", "Alpha")
+    session.add(p); await session.flush()
+    await _add_war_violation(session, p, _war("w1"), datetime(2026, 4, 1, tzinfo=UTC))
+    await _add_war_violation(session, p, _war("w2", war_type=WarType.CWL), datetime(2026, 4, 2, tzinfo=UTC), code=ViolationCode.CWL_MISSED_ATTACK, attack=False, reason="Не использовал атаку в ЛВК")
+    await _add_capital_violation(session, p, datetime(2026, 4, 3, tzinfo=UTC))
+    await session.commit()
+    rows = await StatsService(session, app_yaml_config).all_time_violations_data()
+    assert rows[0]["violations"] == 3
+
+
+@pytest.mark.asyncio
+async def test_all_time_violations_include_former_clan_member(session, app_yaml_config):
+    p = _player("#P1", "Alpha", in_clan=False)
+    session.add(p); await session.flush()
+    await _add_war_violation(session, p, _war("w1"), datetime(2026, 4, 1, tzinfo=UTC))
+    await session.commit()
+    service = StatsService(session, app_yaml_config)
+    rows = await service.all_time_violations_data()
+    text = await service.all_time_violations()
+    assert rows[0]["current_in_clan"] is False
+    assert "вышел из клана" in text
+
+
+@pytest.mark.asyncio
+async def test_all_time_violations_exclude_players_without_violations(session, app_yaml_config):
+    session.add(_player("#P1", "Alpha")); await session.commit()
+    assert await StatsService(session, app_yaml_config).all_time_violations_data() == []
+
+
+@pytest.mark.asyncio
+async def test_all_time_violations_exclude_other_clan_records(session, app_yaml_config):
+    p = _player("#P1", "Alpha")
+    session.add(p); await session.flush()
+    await _add_war_violation(session, p, _war("w1", clan="#OTHER"), datetime(2026, 4, 1, tzinfo=UTC))
+    await _add_capital_violation(session, p, datetime(2026, 4, 2, tzinfo=UTC), clan="#OTHER")
+    await session.commit()
+    assert await StatsService(session, app_yaml_config).all_time_violations_data() == []
+
+
+@pytest.mark.asyncio
+async def test_all_time_violations_ignore_counter_resets(session, app_yaml_config):
+    p = _player("#P1", "Alpha")
+    session.add(p); await session.flush()
+    for i in range(3):
+        await _add_war_violation(session, p, _war(f"w{i}"), datetime(2026, 4, i + 1, tzinfo=UTC))
+    session.add(ViolationCounterReset(player_tag="#P1", cycle_start=datetime(2026, 4, 1, tzinfo=UTC), reset_at=datetime(2026, 4, 4, tzinfo=UTC), reset_by_admin_telegram_id=1, reset_amount=None))
+    session.add(ViolationCounterReset(player_tag="#P1", cycle_start=datetime(2026, 4, 1, tzinfo=UTC), reset_at=datetime(2026, 4, 5, tzinfo=UTC), reset_by_admin_telegram_id=1, reset_amount=2))
+    await session.commit()
+    assert (await StatsService(session, app_yaml_config).all_time_violations_data())[0]["violations"] == 3
+
+
+@pytest.mark.asyncio
+async def test_all_time_violations_ranking_order(session, app_yaml_config):
+    players = [_player("#P1", "Alpha", 3), _player("#P2", "Bravo", 1, False), _player("#P3", "Charlie", 2), _player("#P4", "Delta", 1)]
+    session.add_all(players); await session.flush()
+    for i in range(2):
+        await _add_war_violation(session, players[3], _war(f"wd{i}"), datetime(2026, 4, i + 1, tzinfo=UTC))
+    for idx, p in enumerate(players[:3]):
+        await _add_war_violation(session, p, _war(f"w{idx}"), datetime(2026, 5, idx + 1, tzinfo=UTC))
+    await session.commit()
+    names = [row["player_name"] for row in await StatsService(session, app_yaml_config).all_time_violations_data()]
+    assert names == ["Delta", "Charlie", "Alpha", "Bravo"]
+
+
+@pytest.mark.asyncio
+async def test_build_player_all_time_report_contains_every_violation(session, app_yaml_config):
+    p = _player("#P1", "Alpha")
+    session.add(p); await session.flush()
+    await _add_war_violation(session, p, _war("w1"), datetime(2026, 3, 1, 20, tzinfo=UTC), reason="war reason")
+    await _add_war_violation(session, p, _war("w2", war_type=WarType.CWL), datetime(2026, 4, 1, 20, tzinfo=UTC), code=ViolationCode.CWL_MISSED_ATTACK, attack=False, reason="Не использовал атаку в ЛВК")
+    await _add_capital_violation(session, p, datetime(2026, 4, 2, 20, tzinfo=UTC))
+    await session.commit()
+    text = await StatsService(session, app_yaml_config).build_player_all_time_violations_report(player_tag="#P1", player_name="Alpha")
+    assert "🗄 Все нарушения игрока: Alpha" in text
+    assert "Тег: #P1" in text
+    assert "Всего нарушений в базе: 3" in text
+    assert "war reason" in text and "ЛВК | пропуск атаки" in text and "Столица" in text
+
+
+@pytest.mark.asyncio
+async def test_build_player_all_time_report_is_chronological(session, app_yaml_config):
+    p = _player("#P1", "Alpha")
+    session.add(p); await session.flush()
+    await _add_war_violation(session, p, _war("late"), datetime(2026, 4, 3, tzinfo=UTC), reason="late")
+    await _add_war_violation(session, p, _war("early"), datetime(2026, 4, 1, tzinfo=UTC), reason="early")
+    await session.commit()
+    text = await StatsService(session, app_yaml_config).build_player_all_time_violations_report(player_tag="#P1", player_name="Alpha")
+    assert text.index("early") < text.index("late")
+
+
+@pytest.mark.asyncio
+async def test_build_player_all_time_report_formats_cwl_missed_attack(session, app_yaml_config):
+    p = _player("#P1", "Alpha")
+    session.add(p); await session.flush()
+    await _add_war_violation(session, p, _war("cwl", war_type=WarType.CWL), datetime(2026, 4, 1, 20, tzinfo=UTC), code=ViolationCode.CWL_MISSED_ATTACK, attack=False, reason="Не использовал атаку в ЛВК")
+    await session.commit()
+    text = await StatsService(session, app_yaml_config).build_player_all_time_violations_report(player_tag="#P1", player_name="Alpha")
+    assert "ЛВК | пропуск атаки" in text
+    assert "Код: cwl_missed_attack" in text
+    assert "Причина: Не использовал атаку в ЛВК" in text
+
+
+@pytest.mark.asyncio
+async def test_build_player_all_time_report_handles_capital_without_end_time(session, app_yaml_config):
+    p = _player("#P1", "Alpha")
+    session.add(p); await session.flush()
+    await _add_capital_violation(session, p, datetime(2026, 4, 2, 20, tzinfo=UTC), end_time_marker="none")
+    await session.commit()
+    text = await StatsService(session, app_yaml_config).build_player_all_time_violations_report(player_tag="#P1", player_name="Alpha")
+    assert "Столица" in text
+
+
+@pytest.mark.asyncio
+async def test_build_player_all_time_report_does_not_use_active_counter(session, app_yaml_config, monkeypatch):
+    from app.services.active_violation_counter import ActiveViolationCounterService
+    p = _player("#P1", "Alpha")
+    session.add(p); await session.flush()
+    await _add_war_violation(session, p, _war("w1"), datetime(2026, 4, 1, tzinfo=UTC))
+    await session.commit()
+    async def fail(*args, **kwargs):
+        raise AssertionError("active counter must not be used")
+    monkeypatch.setattr(ActiveViolationCounterService, "count_for_player", fail)
+    monkeypatch.setattr(ActiveViolationCounterService, "counts_for_players", fail)
+    text = await StatsService(session, app_yaml_config).build_player_all_time_violations_report(player_tag="#P1", player_name="Alpha")
+    assert "Всего нарушений в базе: 1" in text
+
+
+@pytest.mark.asyncio
+async def test_current_cycle_violation_report_is_unchanged(session, app_yaml_config):
+    await seed_stats_data(session)
+    text = await StatsService(session, app_yaml_config).build_player_violations_report(datetime(2026, 4, 1, tzinfo=UTC), datetime(2026, 4, 2, 23, tzinfo=UTC), "#P8", "Bravo")
+    assert "🚨 Нарушения игрока" in text
+    assert "Всего нарушений за цикл" in text
+    assert "Активный счетчик нарушений" in text

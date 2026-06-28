@@ -227,6 +227,107 @@ class StatsService:
         )
         return "\n".join(lines)
 
+    async def all_time_violations_data(
+        self,
+    ) -> list[dict[str, int | str | bool]]:
+        rows = await self.repo.all_time_players_violations(
+            clan_tag=self.config.main_clan_tag,
+        )
+        return [
+            {
+                "player_tag": player_tag,
+                "player_name": player_name,
+                "violations": violations,
+                "current_in_clan": current_in_clan,
+            }
+            for player_tag, player_name, _, current_in_clan, violations in rows
+        ]
+
+    async def all_time_violations(
+        self,
+    ) -> str:
+        ranked = await self.all_time_violations_data()
+        if not ranked:
+            return "✅ В базе пока нет сохранённых нарушений."
+        lines = ["🗄 Все нарушения за всё время", ""]
+        for idx, row in enumerate(ranked, 1):
+            suffix = "" if row["current_in_clan"] else " — вышел из клана"
+            lines.append(
+                f"{idx}. {row['player_name']} — всего: {row['violations']}{suffix}"
+            )
+        return "\n".join(lines)
+
+    async def build_player_all_time_violations_report(
+        self,
+        *,
+        player_tag: str,
+        player_name: str,
+    ) -> str:
+        war_rows = await self.war_repo.list_player_violations_all_time(
+            clan_tag=self.config.main_clan_tag,
+            player_tag=player_tag,
+        )
+        capital_rows = await self.capital_violation_repo.list_for_player_all_time(
+            clan_tag=self.config.main_clan_tag,
+            player_tag=player_tag,
+        )
+        entries: list[tuple[datetime, str, int, list[str]]] = []
+        for violation, attack, war in war_rows:
+            war_type = "ЛВК" if war.war_type == WarType.CWL else "КВ"
+            if violation.code == ViolationCode.CWL_MISSED_ATTACK and attack is None:
+                detail_lines = [
+                    f"{violation.detected_at:%Y-%m-%d %H:%M} | ЛВК | пропуск атаки",
+                    f"Код: {violation.code.value}",
+                    f"Причина: {violation.reason_text}",
+                    f"Война: против {war.opponent_name}",
+                ]
+            else:
+                assert attack is not None
+                detail_lines = [
+                    f"{violation.detected_at:%Y-%m-%d %H:%M} | {war_type} | "
+                    f"{attack.attacker_position} -> {attack.defender_position}",
+                    f"Код: {violation.code.value}",
+                    f"Причина: {violation.reason_text}",
+                ]
+            entries.append((violation.detected_at, "war", violation.id, detail_lines))
+        for violation, weekend in capital_rows:
+            violation_at = weekend.end_time or violation.detected_at
+            entries.append(
+                (
+                    violation_at,
+                    "capital",
+                    violation.id,
+                    [
+                        f"{violation_at:%Y-%m-%d %H:%M} | Столица",
+                        f"Код: {violation.code}",
+                        f"Причина: {violation.reason_text}",
+                        f"Атак в рейде: {violation.attacks}",
+                    ],
+                )
+            )
+        entries.sort(
+            key=lambda entry: (
+                entry[0],
+                entry[1],
+                entry[2],
+            )
+        )
+        if not entries:
+            return f"✅ У игрока {player_name} нет сохранённых нарушений в базе."
+
+        lines = [
+            f"🗄 Все нарушения игрока: {player_name}",
+            f"Тег: {player_tag}",
+            f"Всего нарушений в базе: {len(entries)}",
+            "",
+        ]
+        for idx, (_, _, _, detail_lines) in enumerate(entries, 1):
+            lines.append(f"{idx}. {detail_lines[0]}")
+            lines.extend(detail_lines[1:])
+            if idx < len(entries):
+                lines.append("")
+        return "\n".join(lines)
+
     async def build_player_violations_report(self, period_start, period_end, player_tag: str, player_name: str) -> str:
         war_rows = await self.war_repo.list_player_violations_in_period(
             clan_tag=self.config.main_clan_tag,

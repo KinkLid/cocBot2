@@ -111,6 +111,24 @@ class WarRepository:
         )
         return list(result.all())
 
+    async def list_player_violations_all_time(
+        self,
+        *,
+        clan_tag: str,
+        player_tag: str,
+    ) -> list[tuple[Violation, Attack | None, War]]:
+        result = await self.session.execute(
+            select(Violation, Attack, War)
+            .join(War, Violation.war_id == War.id)
+            .outerjoin(Attack, Violation.attack_id == Attack.id)
+            .where(
+                War.clan_tag == clan_tag,
+                Violation.player_tag == player_tag,
+            )
+            .order_by(Violation.detected_at.asc(), Violation.id.asc())
+        )
+        return list(result.all())
+
 
     async def get_cwl_missed_attack_violation(
         self,
