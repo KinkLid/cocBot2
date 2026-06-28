@@ -627,6 +627,44 @@ async def current_cycle_violations(message: Message, state: FSMContext, app_cont
     await send_long_message(message, text + "\n\nВведите номер игрока, чтобы посмотреть его нарушения.\nИли нажмите ⬅️ Назад.")
 
 
+@router.message(F.text == "🗄 Все нарушения")
+async def all_time_violations(
+    message: Message,
+    state: FSMContext,
+    app_context: AppContext,
+) -> None:
+    try:
+        _ensure_admin(app_context, message.from_user.id)
+    except PermissionError:
+        await message.answer("⛔ Недостаточно прав")
+        return
+    try:
+        async with app_context.session_maker() as session:
+            service = StatsService(session, app_context.config)
+            options = await service.all_time_violations_data()
+            text = await service.all_time_violations()
+        if not options:
+            await state.clear()
+            await message.answer(text)
+            return
+
+        await state.clear()
+        await state.update_data(all_violation_player_options=options)
+        await state.set_state(ViolationStates.awaiting_all_violations_player_number)
+        await message.answer(
+            text
+            + "\n\nВведите номер игрока, чтобы посмотреть всю историю его нарушений."
+            + "\nИли нажмите ⬅️ Назад.",
+            reply_markup=back_keyboard(),
+        )
+    except Exception:
+        logger.exception(
+            "Failed to load all-time violations ranking"
+        )
+        await state.clear()
+        await message.answer("⚠️ Не удалось загрузить полную историю нарушений. Попробуйте позже.")
+
+
 @router.message(F.text == "♻️ Сбросить счетчик нарушений")
 async def reset_violation_counter_start(
     message: Message, state: FSMContext, app_context: AppContext
@@ -841,6 +879,69 @@ async def violation_player_selected(message: Message, state: FSMContext, app_con
         logger.exception("Failed to load player violations report")
         await state.clear()
         await message.answer("⚠️ Не удалось загрузить нарушения игрока. Попробуйте позже.")
+
+
+@router.message(
+    ViolationStates.awaiting_all_violations_player_number
+)
+async def all_time_violation_player_selected(
+    message: Message,
+    state: FSMContext,
+    app_context: AppContext,
+) -> None:
+    try:
+        _ensure_admin(app_context, message.from_user.id)
+    except PermissionError:
+        await message.answer("⛔ Недостаточно прав")
+        await state.clear()
+        return
+
+    text = (message.text or "").strip()
+    if text == "⬅️ Назад":
+        await state.clear()
+        async with app_context.session_maker() as session:
+            is_registered = await RegistrationService(
+                session, app_context.clash_client
+            ).is_registered(message.from_user.id)
+        await message.answer(
+            "Главное меню",
+            reply_markup=main_menu(
+                is_admin=True,
+                is_registered=is_registered,
+            ),
+        )
+        return
+
+    try:
+        idx = int(text)
+    except ValueError:
+        await message.answer("⚠️ Введите номер игрока из списка или нажмите ⬅️ Назад.")
+        return
+
+    data = await state.get_data()
+    options = data.get("all_violation_player_options", [])
+    if idx < 1 or idx > len(options):
+        await message.answer("⚠️ Нет игрока с таким номером.")
+        return
+
+    selected = options[idx - 1]
+    try:
+        async with app_context.session_maker() as session:
+            report = await StatsService(
+                session,
+                app_context.config,
+            ).build_player_all_time_violations_report(
+                player_tag=selected["player_tag"],
+                player_name=selected["player_name"],
+            )
+        await send_long_message(message, report)
+        await state.clear()
+    except Exception:
+        logger.exception(
+            "Failed to load player all-time violations report"
+        )
+        await state.clear()
+        await message.answer("⚠️ Не удалось загрузить полную историю нарушений игрока. Попробуйте позже.")
 
 
 @router.message(F.text == "🚩 Чужой флажок")

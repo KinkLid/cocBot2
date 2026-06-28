@@ -262,3 +262,56 @@ class StatsRepository:
             )
         )
         return [(row[0], row[1], row[2], int(row[3])) for row in (await self.session.execute(stmt)).all()]
+
+    async def all_time_players_violations(
+        self,
+        *,
+        clan_tag: str,
+    ) -> list[tuple[str, str, int | None, bool, int]]:
+        violations_subq = (
+            select(
+                Violation.player_tag.label("player_tag"),
+                func.count(Violation.id).label("violations"),
+            )
+            .join(War, War.id == Violation.war_id)
+            .where(War.clan_tag == clan_tag)
+            .group_by(Violation.player_tag)
+            .subquery()
+        )
+        capital_violations_subq = (
+            select(
+                CapitalRaidViolation.player_tag.label("player_tag"),
+                func.count(CapitalRaidViolation.id).label("violations"),
+            )
+            .join(CapitalRaidWeekend, CapitalRaidWeekend.id == CapitalRaidViolation.weekend_id)
+            .where(CapitalRaidWeekend.clan_tag == clan_tag)
+            .group_by(CapitalRaidViolation.player_tag)
+            .subquery()
+        )
+        total_violations = (
+            func.coalesce(violations_subq.c.violations, 0)
+            + func.coalesce(capital_violations_subq.c.violations, 0)
+        )
+        stmt = (
+            select(
+                PlayerAccount.player_tag,
+                PlayerAccount.name,
+                PlayerAccount.current_clan_rank,
+                PlayerAccount.current_in_clan,
+                total_violations.label("violations"),
+            )
+            .outerjoin(violations_subq, violations_subq.c.player_tag == PlayerAccount.player_tag)
+            .outerjoin(capital_violations_subq, capital_violations_subq.c.player_tag == PlayerAccount.player_tag)
+            .where(total_violations > 0)
+            .order_by(
+                total_violations.desc(),
+                PlayerAccount.current_in_clan.desc(),
+                PlayerAccount.current_clan_rank.asc().nulls_last(),
+                PlayerAccount.name.asc(),
+                PlayerAccount.player_tag.asc(),
+            )
+        )
+        return [
+            (row[0], row[1], row[2], row[3], int(row[4]))
+            for row in (await self.session.execute(stmt)).all()
+        ]
