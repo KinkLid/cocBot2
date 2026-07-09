@@ -16,6 +16,7 @@ ROLLBACK_RUNNING=0
 OLD_SERVICE_ACTIVE="unknown"
 OLD_SERVICE_ENABLED="unknown"
 DRY_RUN=0
+USE_EXISTING_REMOTE_CLONE=0
 REMOTE_UID=""
 REMOTE_SSH_USER=""
 REMOTE_SSH_GROUP=""
@@ -29,6 +30,7 @@ FINAL_BACKUP_PATH=""
 ACTIVE_PLAYERS="0"
 FINAL_SHA256=""
 GIT_COMMIT="no-git"
+SOURCE_BRANCH=""
 
 log() { printf '[%s] %s\n' "${SCRIPT_NAME}" "$*"; }
 warn() { printf '[%s] WARNING: %s\n' "${SCRIPT_NAME}" "$*" >&2; }
@@ -148,10 +150,14 @@ trap 'on_signal INT' INT
 trap 'on_signal TERM' TERM
 trap cleanup EXIT
 
-usage() { echo "Usage: $0 [--dry-run] [ssh-target] [remote-dir]"; }
+usage() { echo "Usage: $0 [--dry-run] [--use-existing-remote-clone] [ssh-target] [remote-dir]"; }
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
+    --use-existing-remote-clone)
+      USE_EXISTING_REMOTE_CLONE=1
+      shift
+      ;;
     -h|--help) usage; exit 0 ;;
     --*) die_before_cutover "Unknown option: $1" ;;
     *) if [[ -z "${ARG_TARGET:-}" ]]; then ARG_TARGET="$1"; elif [[ -z "${ARG_DIR:-}" ]]; then ARG_DIR="$1"; else die_before_cutover "Too many arguments"; fi; shift ;;
@@ -170,7 +176,24 @@ REMOTE_DIR="${REMOTE_DIR:-${DEFAULT_REMOTE_DIR}}"
 
 cd "${PROJECT_ROOT}"
 for f in .env config.yaml app/main.py alembic.ini scripts/install_on_server.sh; do [[ -e "$f" ]] || die_before_cutover "Required file is missing: $f"; done
-for c in python3.12 ssh scp rsync sha256sum flock systemctl pgrep; do need_cmd "$c"; done
+for c in python3.12 ssh sha256sum flock systemctl pgrep; do need_cmd "$c"; done
+if [[ "${USE_EXISTING_REMOTE_CLONE}" == "1" ]]; then
+  need_cmd git
+  [[ -d .git ]] || die_before_cutover "Локальный каталог не является Git-репозиторием: ${PROJECT_ROOT}"
+  SOURCE_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+  [[ "${SOURCE_BRANCH}" != "HEAD" ]] || die_before_cutover "Detached HEAD не поддерживается для --use-existing-remote-clone"
+  GIT_COMMIT="$(git rev-parse HEAD)"
+  git diff --quiet || die_before_cutover "В локальном репозитории есть изменения tracked-файлов."
+  git diff --cached --quiet || die_before_cutover "В локальном индексе есть staged изменения."
+  if [[ "${DRY_RUN}" != "1" ]]; then
+    git fetch origin "${SOURCE_BRANCH}" --prune
+  fi
+  ORIGIN_COMMIT="$(git rev-parse "origin/${SOURCE_BRANCH}")"
+  [[ "${GIT_COMMIT}" == "${ORIGIN_COMMIT}" ]] || die_before_cutover "Локальный commit не совпадает с origin/<ветка>. Сначала отправьте изменения в удалённый репозиторий."
+else
+  need_cmd scp
+  need_cmd rsync
+fi
 if [[ "${COCBOT_TEST_LOCAL_UID:-$(id -u)}" != "0" ]]; then
   sudo -n true >/dev/null 2>&1 || die_before_cutover $'Запустите скрипт от root\nили настройте локальный passwordless sudo для systemctl.'
 fi
@@ -200,8 +223,32 @@ REMOTE_SSH_GROUP="$(remote_run 'id -gn')"
 REMOTE_IP="$(remote_run 'curl -4 -fsS https://api.ipify.org' 2>/dev/null || true)"
 if [[ -n "${REMOTE_IP}" ]]; then log "Публичный IPv4 нового сервера: ${REMOTE_IP}"; else warn "Не удалось определить публичный IPv4 нового сервера"; fi
 
+if [[ "${USE_EXISTING_REMOTE_CLONE}" == "1" ]]; then
+  if ! remote_root bash -se <<EOF_REMOTE_GIT_CHECK
+set -Eeuo pipefail
+[[ -d '${REMOTE_DIR}' ]]
+[[ -d '${REMOTE_DIR}/.git' ]]
+[[ -f '${REMOTE_DIR}/app/main.py' ]]
+[[ -f '${REMOTE_DIR}/scripts/install_on_server.sh' ]]
+git -C '${REMOTE_DIR}' rev-parse --is-inside-work-tree >/dev/null
+EOF_REMOTE_GIT_CHECK
+  then
+    die_before_cutover "Удалённый каталог не является Git-репозиторием: ${REMOTE_DIR}"
+  fi
+  remote_root bash -lc "git -C '${REMOTE_DIR}' diff --quiet" || die_before_cutover "В удалённом репозитории есть изменения tracked-файлов."
+  remote_root bash -lc "git -C '${REMOTE_DIR}' diff --cached --quiet" || die_before_cutover "В удалённом репозитории есть изменения tracked-файлов."
+fi
+
 if [[ "${DRY_RUN}" == "1" ]]; then
-  log "План: подготовить ${SSH_TARGET}:${REMOTE_DIR}, перенести код/config/SQLite, остановить старый ${SERVICE_NAME}, запустить новый."
+  if [[ "${USE_EXISTING_REMOTE_CLONE}" == "1" ]]; then
+    log "Режим кода: существующий Git clone"
+    log "Ветка: ${SOURCE_BRANCH}"
+    log "Commit: ${GIT_COMMIT}"
+    log "Удалённый каталог: ${REMOTE_DIR}"
+    log "База будет перенесена только после остановки старого сервиса."
+  else
+    log "План: подготовить ${SSH_TARGET}:${REMOTE_DIR}, перенести код/config/SQLite, остановить старый ${SERVICE_NAME}, запустить новый."
+  fi
   log "Remote SSH user/group: ${REMOTE_SSH_USER}:${REMOTE_SSH_GROUP}"
   echo "Dry-run завершён. Изменения не применялись."
   exit 0
@@ -234,10 +281,30 @@ chmod 700 '${REMOTE_STAGE}'
 chmod 700 '${REMOTE_STAGE}/code' '${REMOTE_STAGE}/config'
 EOF_REMOTE_PREP
 
-rsync -az --delete --exclude='.git/' --exclude='.venv/' --exclude='.env' --exclude='config.yaml' --exclude='data/' --exclude='logs/' --exclude='exports/' --exclude='backups/' --exclude='.migration/' --exclude='__pycache__/' --exclude='.pytest_cache/' --exclude='.mypy_cache/' --exclude='htmlcov/' --exclude='.DS_Store' "${PROJECT_ROOT}/" "${SSH_TARGET}:${REMOTE_STAGE}/code/"
-scp "${TMP_ENV}" "${SSH_TARGET}:${REMOTE_STAGE}/config/.env" >/dev/null
-scp "${PROJECT_ROOT}/config.yaml" "${SSH_TARGET}:${REMOTE_STAGE}/config/config.yaml" >/dev/null
-remote_root bash -se <<EOF_REMOTE_INSTALL
+if [[ "${USE_EXISTING_REMOTE_CLONE}" == "1" ]]; then
+  remote_as_service_user "git -C '${REMOTE_DIR}' fetch origin '${SOURCE_BRANCH}' --prune"
+  remote_as_service_user "git -C '${REMOTE_DIR}' checkout -B '${SOURCE_BRANCH}' 'origin/${SOURCE_BRANCH}'"
+  REMOTE_GIT_COMMIT="$(remote_as_service_user "git -C '${REMOTE_DIR}' rev-parse HEAD")"
+  [[ "${REMOTE_GIT_COMMIT}" == "${GIT_COMMIT}" ]] || die_before_cutover "Remote git commit mismatch"
+  remote_as_service_user "git -C '${REMOTE_DIR}' branch --set-upstream-to=\"origin/${SOURCE_BRANCH}\" '${SOURCE_BRANCH}'"
+  scp "${TMP_ENV}" "${SSH_TARGET}:${REMOTE_STAGE}/config/.env" >/dev/null
+  scp "${PROJECT_ROOT}/config.yaml" "${SSH_TARGET}:${REMOTE_STAGE}/config/config.yaml" >/dev/null
+  remote_root bash -se <<EOF_REMOTE_INSTALL_CLONE
+set -Eeuo pipefail
+mkdir -p '${REMOTE_DIR}/backups/pre-migration-${MIGRATION_ID}' '${REMOTE_DIR}/data'
+for item in .env config.yaml data/clanbot.sqlite3; do [ -e '${REMOTE_DIR}/'"\$item" ] && cp -a '${REMOTE_DIR}/'"\$item" '${REMOTE_DIR}/backups/pre-migration-${MIGRATION_ID}/' || true; done
+cp '${REMOTE_STAGE}/config/.env' '${REMOTE_DIR}/.env'
+cp '${REMOTE_STAGE}/config/config.yaml' '${REMOTE_DIR}/config.yaml'
+chown '${REMOTE_SERVICE_USER}:${REMOTE_SERVICE_USER}' '${REMOTE_DIR}/.env' '${REMOTE_DIR}/config.yaml'
+chmod 600 '${REMOTE_DIR}/.env'; chmod 640 '${REMOTE_DIR}/config.yaml'
+bash '${REMOTE_DIR}/scripts/install_on_server.sh' --prepare-only --service-user '${REMOTE_SERVICE_USER}' '${REMOTE_DIR}'
+state="\$(systemctl is-active ${SERVICE_NAME} || true)"; if [ "\$state" = active ]; then echo 'WARNING: remote service was active; stopping'; systemctl stop ${SERVICE_NAME}; fi
+EOF_REMOTE_INSTALL_CLONE
+else
+  rsync -az --delete --exclude='.git/' --exclude='.venv/' --exclude='.env' --exclude='config.yaml' --exclude='data/' --exclude='logs/' --exclude='exports/' --exclude='backups/' --exclude='.migration/' --exclude='__pycache__/' --exclude='.pytest_cache/' --exclude='.mypy_cache/' --exclude='htmlcov/' --exclude='.DS_Store' "${PROJECT_ROOT}/" "${SSH_TARGET}:${REMOTE_STAGE}/code/"
+  scp "${TMP_ENV}" "${SSH_TARGET}:${REMOTE_STAGE}/config/.env" >/dev/null
+  scp "${PROJECT_ROOT}/config.yaml" "${SSH_TARGET}:${REMOTE_STAGE}/config/config.yaml" >/dev/null
+  remote_root bash -se <<EOF_REMOTE_INSTALL
 set -Eeuo pipefail
 mkdir -p '${REMOTE_DIR}/backups/pre-migration-${MIGRATION_ID}' '${REMOTE_DIR}/data'
 for item in .env config.yaml data/clanbot.sqlite3; do [ -e '${REMOTE_DIR}/'"\$item" ] && cp -a '${REMOTE_DIR}/'"\$item" '${REMOTE_DIR}/backups/pre-migration-${MIGRATION_ID}/' || true; done
@@ -249,6 +316,7 @@ chmod 600 '${REMOTE_DIR}/.env'; chmod 640 '${REMOTE_DIR}/config.yaml'
 bash '${REMOTE_DIR}/scripts/install_on_server.sh' --prepare-only --service-user '${REMOTE_SERVICE_USER}' '${REMOTE_DIR}'
 state="\$(systemctl is-active ${SERVICE_NAME} || true)"; if [ "\$state" = active ]; then echo 'WARNING: remote service was active; stopping'; systemctl stop ${SERVICE_NAME}; fi
 EOF_REMOTE_INSTALL
+fi
 
 if ! remote_as_service_user "cd '${REMOTE_DIR}' && ./.venv/bin/python scripts/check_server_health.py --project-dir '${REMOTE_DIR}' --online-only"; then
   [[ -n "${REMOTE_IP}" ]] && warn "Публичный IPv4 нового сервера: ${REMOTE_IP}"

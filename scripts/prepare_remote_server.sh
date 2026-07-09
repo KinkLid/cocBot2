@@ -5,7 +5,7 @@ umask 077
 SCRIPT_NAME="prepare_remote_server.sh"
 PROJECT_DIR="/opt/cocbot"
 SERVICE_USER="cocbot"
-PACKAGES=(python3.12 python3.12-venv python3-pip rsync sqlite3 curl ca-certificates)
+PACKAGES=(python3.12 python3.12-venv python3-pip rsync sqlite3 curl ca-certificates git)
 
 log() { printf '[%s] %s\n' "${SCRIPT_NAME}" "$*"; }
 warn() { printf '[%s] WARNING: %s\n' "${SCRIPT_NAME}" "$*" >&2; }

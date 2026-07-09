@@ -202,12 +202,18 @@ case "$cmd" in
   *"check_server_health.py"*"--offline"*) echo "$cmd" >> "$LOG"; if [[ -n "${{REQUIRE_RUNUSER_HEALTH:-}}" && "$cmd" != *"runuser -u cocbot -- bash -lc"* ]]; then echo env denied >&2; exit 13; fi; exit 0;;
   *"systemctl is-active cocbot"*) {'echo inactive; exit 0' if fail_remote_active else 'echo active; exit 0'};;
   *"journalctl"*) if [[ -n "${{REMOTE_JOURNAL_FAIL:-}}" ]]; then echo permission denied >&2; exit 7; fi; printf '%s\n' "${{REMOTE_JOURNAL_TEXT:-}}"; exit 0;;
+  *"git -C "*" rev-parse --is-inside-work-tree"*) if [[ -n "${{REMOTE_GIT_MISSING:-}}" ]]; then exit 1; fi; echo true; exit 0;;
+  *"test -d "*"&& test -d "*"&& test -f "*"&& test -f "*) if [[ -n "${{REMOTE_GIT_MISSING:-}}" ]]; then exit 1; fi; exit 0;;
+  *"git -C "*" diff --quiet"*) if [[ -n "${{REMOTE_GIT_DIRTY:-}}" ]]; then exit 1; fi; exit 0;;
+  *"git -C "*" diff --cached --quiet"*) exit 0;;
+  *"git -C "*" rev-parse HEAD"*) echo "${{REMOTE_GIT_COMMIT:-abc}}"; exit 0;;
   chown*) touch "$STATE/remote_backup_chowned"; exit 0;;
   chmod*) touch "$STATE/remote_backup_chmodded"; exit 0;;
 esac
 if [[ "$cmd" == *"bash -se"* ]]; then
   input=$(cat)
   printf '%s\n' "$input" | sed 's/^/ssh-stdin /' >> "$LOG"
+  if [[ "$input" == *"rev-parse --is-inside-work-tree"* && -n "${{REMOTE_GIT_MISSING:-}}" ]]; then exit 1; fi
   if [[ "$input" == *"alembic upgrade head"* && -n "${{FAIL_AFTER_STOP:-}}" ]]; then exit 1; fi
   exit 0
 fi
@@ -253,6 +259,18 @@ exit 0
     write("flock", 'echo "flock $*" >> "$LOG"\nexit 0\n')
     write("sqlite3", 'echo "sqlite3 $*" >> "$LOG"\necho ok\n')
     write("sleep", 'echo "sleep $*" >> "$LOG"\nexit 0\n')
+    write("git", r'''
+echo "git $*" >> "$LOG"
+if [[ -z "${GIT_FAKE_OK:-}" ]]; then /usr/bin/git "$@"; exit $?; fi
+case "$*" in
+  "rev-parse --abbrev-ref HEAD") echo main; exit 0;;
+  "rev-parse HEAD") echo abc; exit 0;;
+  "rev-parse origin/main") echo abc; exit 0;;
+  "diff --quiet"|"diff --cached --quiet") exit 0;;
+  "fetch origin main --prune") exit 0;;
+esac
+exit 0
+''')
     write("python3.12", r'''
 echo "python3.12 $*" >> "$LOG"
 if [[ "$*" == *"scripts/backup_sqlite.py"* ]]; then
@@ -494,3 +512,129 @@ def test_rollback_stops_local_service_before_db_replace(repo_env_files, tmp_path
     assert res.returncode == 0, res.stderr
     assert joined.index("systemctl stop cocbot") < joined.index("systemctl is-active cocbot", joined.index("systemctl stop cocbot"))
     assert joined.index("pgrep -af python.*-m app.main") < joined.index("python3.12 -c import sys; raise SystemExit")
+
+# --- existing remote Git clone migration mode ---
+
+def test_migration_usage_contains_existing_remote_clone_flag() -> None:
+    c = read("scripts/migrate_to_new_server.sh")
+    assert "Usage: $0 [--dry-run] [--use-existing-remote-clone] [ssh-target] [remote-dir]" in c
+    assert "USE_EXISTING_REMOTE_CLONE=0" in c
+    assert "--use-existing-remote-clone)" in c
+    assert "USE_EXISTING_REMOTE_CLONE=1" in c
+
+
+def test_prepare_remote_server_installs_git() -> None:
+    c = read("scripts/prepare_remote_server.sh")
+    packages = c[c.index("PACKAGES=("): c.index(")", c.index("PACKAGES=("))]
+    assert "git" in packages.split()
+
+
+def _existing_clone_branch(c: str) -> str:
+    start = c.index('if [[ "${USE_EXISTING_REMOTE_CLONE}" == "1" ]]; then', c.index("Готовлю новый сервер"))
+    end = c.index('else', start)
+    return c[start:end]
+
+
+def test_existing_clone_mode_does_not_rsync_source_code() -> None:
+    branch = _existing_clone_branch(read("scripts/migrate_to_new_server.sh"))
+    assert "${REMOTE_STAGE}/code/" not in branch
+    assert "rsync -az --delete" not in branch
+    assert "rsync -a --delete" not in branch
+    assert "scp \"${PROJECT_ROOT}/app" not in branch
+
+
+def test_existing_clone_mode_preserves_remote_git_directory() -> None:
+    c = read("scripts/migrate_to_new_server.sh")
+    assert "rm -rf .git" not in c
+    assert "git clean" not in c
+    assert "'${REMOTE_STAGE}/code/' '${REMOTE_DIR}/'" not in _existing_clone_branch(c)
+
+
+def test_existing_clone_mode_checks_remote_repository_before_cutover() -> None:
+    c = read("scripts/migrate_to_new_server.sh")
+    stop = c.index('local_root systemctl stop "${SERVICE_NAME}"')
+    for needle in ["[[ -d '${REMOTE_DIR}/.git' ]]", "git -C '${REMOTE_DIR}' diff --quiet", "git -C '${REMOTE_DIR}' diff --cached --quiet"]:
+        assert c.index(needle) < stop
+
+
+def test_existing_clone_mode_checks_source_commit_is_pushed() -> None:
+    c = read("scripts/migrate_to_new_server.sh")
+    assert 'SOURCE_BRANCH="$(git rev-parse --abbrev-ref HEAD)"' in c
+    assert '[[ "${SOURCE_BRANCH}" != "HEAD" ]]' in c
+    assert 'GIT_COMMIT="$(git rev-parse HEAD)"' in c
+    assert 'git diff --quiet' in c
+    assert 'git diff --cached --quiet' in c
+    assert 'git fetch origin "${SOURCE_BRANCH}" --prune' in c
+    assert 'origin/${SOURCE_BRANCH}' in c
+    assert 'Локальный commit не совпадает с origin/<ветка>. Сначала отправьте изменения в удалённый репозиторий.' in c
+
+
+def test_existing_clone_mode_checks_out_exact_source_commit() -> None:
+    c = read("scripts/migrate_to_new_server.sh")
+    branch = _existing_clone_branch(c)
+    assert 'git -C \'${REMOTE_DIR}\' fetch origin \'${SOURCE_BRANCH}\' --prune' in branch
+    assert 'git -C \'${REMOTE_DIR}\' checkout -B \'${SOURCE_BRANCH}\' \'origin/${SOURCE_BRANCH}\'' in branch
+    assert 'git -C \'${REMOTE_DIR}\' rev-parse HEAD' in branch
+    assert '[[ "${REMOTE_GIT_COMMIT}" == "${GIT_COMMIT}" ]]' in branch
+    assert '--set-upstream-to=\\"origin/${SOURCE_BRANCH}\\"' in branch
+
+
+def test_existing_clone_mode_keeps_database_cutover_order() -> None:
+    c = read("scripts/migrate_to_new_server.sh")
+    needles = [
+        'local_root systemctl stop "${SERVICE_NAME}"',
+        'scripts/backup_sqlite.py',
+        "sha256sum '${REMOTE_DIR}/data/clanbot.sqlite3.incoming'",
+        'PRAGMA integrity_check',
+        'alembic upgrade head',
+        "scripts/check_server_health.py --project-dir '${REMOTE_DIR}' --offline",
+        'systemctl enable ${SERVICE_NAME}',
+        'local_root systemctl disable "${SERVICE_NAME}"',
+    ]
+    positions = [c.index(n) for n in needles]
+    assert positions == sorted(positions)
+
+
+def test_existing_clone_missing_repository_fails_before_old_service_stop(repo_env_files, tmp_path: Path) -> None:
+    fake, log = make_fake_bin(tmp_path)
+    res = run(["bash", str(SCRIPTS / "migrate_to_new_server.sh"), "--use-existing-remote-clone", "testuser@example", "/opt/cocbot"], env=fake_env(fake, {"GIT_FAKE_OK":"1", "REMOTE_GIT_MISSING":"1"}))
+    calls = log.read_text(encoding="utf-8")
+    assert res.returncode != 0
+    assert "Удалённый каталог не является Git-репозиторием" in res.stderr
+    assert "systemctl stop cocbot" not in calls
+
+
+def test_existing_clone_dirty_tracked_files_fail_before_old_service_stop(repo_env_files, tmp_path: Path) -> None:
+    fake, log = make_fake_bin(tmp_path)
+    res = run(["bash", str(SCRIPTS / "migrate_to_new_server.sh"), "--use-existing-remote-clone", "testuser@example", "/opt/cocbot"], env=fake_env(fake, {"GIT_FAKE_OK":"1", "REMOTE_GIT_DIRTY":"1"}))
+    calls = log.read_text(encoding="utf-8")
+    assert res.returncode != 0
+    assert "В удалённом репозитории есть изменения tracked-файлов." in res.stderr
+    assert "systemctl stop cocbot" not in calls
+
+
+def test_existing_clone_commit_mismatch_fails_before_old_service_stop(repo_env_files, tmp_path: Path) -> None:
+    fake, log = make_fake_bin(tmp_path)
+    res = run(["bash", str(SCRIPTS / "migrate_to_new_server.sh"), "--use-existing-remote-clone", "testuser@example", "/opt/cocbot"], env=fake_env(fake, {"GIT_FAKE_OK":"1", "REMOTE_GIT_COMMIT":"def"}))
+    calls = log.read_text(encoding="utf-8")
+    assert res.returncode != 0
+    assert "Remote git commit mismatch" in res.stderr
+    assert "systemctl stop cocbot" not in calls
+
+
+def test_existing_clone_dry_run_does_not_mutate_servers(repo_env_files, tmp_path: Path) -> None:
+    fake, log = make_fake_bin(tmp_path)
+    res = run(["bash", str(SCRIPTS / "migrate_to_new_server.sh"), "--dry-run", "--use-existing-remote-clone", "testuser@example", "/opt/cocbot"], env=fake_env(fake, {"GIT_FAKE_OK":"1"}))
+    calls = log.read_text(encoding="utf-8")
+    assert res.returncode == 0, res.stderr
+    assert "Режим кода: существующий Git clone" in res.stdout
+    for forbidden in ["git fetch", "git checkout", "rsync ", "scp ", "apt-get", "systemctl stop", "systemctl start", "systemctl restart", "systemctl enable", "systemctl disable", "backup_sqlite.py"]:
+        assert forbidden not in calls
+
+
+def test_normal_migration_mode_still_uses_rsync_code_transfer() -> None:
+    c = read("scripts/migrate_to_new_server.sh")
+    normal = c[c.index('else', c.index("EOF_REMOTE_INSTALL_CLONE")): c.index("EOF_REMOTE_INSTALL\nfi")]
+    assert "rsync -az --delete" in normal
+    assert "${REMOTE_STAGE}/code/" in normal
+    assert "rsync -a --delete" in normal
