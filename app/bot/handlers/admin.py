@@ -1138,15 +1138,15 @@ async def manual_contribution_callback(callback: CallbackQuery, state: FSMContex
         return
     if action == "back":
         current = await state.get_state()
-        if current == str(ManualContributionStates.entering_points):
+        if current == ManualContributionStates.entering_points.state:
             async with app_context.session_maker() as session:
                 players = await ManualContributionRepository(session).current_main_clan_players(app_context.config.main_clan_tag)
             await state.set_state(ManualContributionStates.choosing_player)
             await callback.message.answer("Выберите игрока для начисления баллов:", reply_markup=manual_contribution_players_keyboard(players, 0))
-        elif current == str(ManualContributionStates.entering_comment):
+        elif current == ManualContributionStates.entering_comment.state:
             await state.set_state(ManualContributionStates.entering_points)
             await callback.message.answer("Введите количество баллов:", reply_markup=manual_contribution_cancel_keyboard())
-        elif current == str(ManualContributionStates.choosing_player):
+        elif current == ManualContributionStates.choosing_player.state:
             await state.clear()
             async with app_context.session_maker() as session:
                 is_registered = await RegistrationService(session, app_context.clash_client).is_registered(callback.from_user.id)
@@ -1166,7 +1166,7 @@ async def manual_contribution_callback(callback: CallbackQuery, state: FSMContex
                 await callback.answer("Баллы уже были начислены.")
                 return
         data_state = await state.get_data()
-        if await state.get_state() != str(ManualContributionStates.confirming):
+        if await state.get_state() != ManualContributionStates.confirming.state:
             await callback.answer("Эта операция устарела. Начните начисление заново.", show_alert=True)
             return
         if data_state.get("operation_token") != operation_token:

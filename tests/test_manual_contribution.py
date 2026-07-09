@@ -5,6 +5,9 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import StorageKey
+from aiogram.fsm.storage.memory import MemoryStorage
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -97,9 +100,92 @@ from sqlalchemy import func, select
 from app.bot.handlers.admin import manual_contribution_callback
 from app.bot.states.manual_contribution import ManualContributionStates
 from app.models import CycleBoundary
-from tests.fakes import FakeCallback, FakeState
+from tests.fakes import FakeCallback, FakeState as BaseFakeState
 from app.services.auth import AuthService
 
+
+class FakeState(BaseFakeState):
+    async def set_state(self, state) -> None:
+        self.state = state.state if hasattr(state, "state") else state
+
+
+
+def test_manual_contribution_confirm_works_with_real_aiogram_fsm_state(tmp_path, app_yaml_config):
+    async def run():
+        engine, maker = await _db(tmp_path)
+        async with maker() as session:
+            player = await _seed(session)
+            session.add(CycleBoundary(source_key="cycle", boundary_at=NOW - timedelta(hours=1), description="cycle"))
+            await session.commit()
+
+        state = FSMContext(
+            storage=MemoryStorage(),
+            key=StorageKey(bot_id=1, chat_id=1, user_id=1),
+        )
+        await state.set_state(ManualContributionStates.confirming)
+        assert await state.get_state() == ManualContributionStates.confirming.state
+        assert await state.get_state() != str(ManualContributionStates.confirming)
+        await state.update_data(
+            player_id=player.id,
+            player_name=player.name,
+            player_tag=player.player_tag,
+            points=25,
+            comment="Помощь клану",
+            operation_token="real-fsm-token",
+        )
+        callback = FakeCallback("manual_contribution:confirm:real-fsm-token", user_id=1, username="admin")
+
+        with patch("app.bot.handlers.admin.utcnow", side_effect=[NOW, NOW]):
+            await manual_contribution_callback(callback, state, _ctx(app_yaml_config, maker))
+
+        assert await state.get_state() is None
+        async with maker() as session:
+            rows = (await session.scalars(select(ManualContributionAdjustment))).all()
+            assert len(rows) == 1
+            adj = rows[0]
+            assert adj.points == 25
+            assert adj.comment == "Помощь клану"
+            assert adj.operation_token == "real-fsm-token"
+        text = callback.message.answer.call_args.args[0]
+        assert "✅ Баллы начислены" in text
+        answers = [call.args[0] for call in callback.answer.call_args_list if call.args]
+        assert "Эта операция устарела. Начните начисление заново." not in answers
+        await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_manual_contribution_confirm_rejects_real_fsm_wrong_state(tmp_path, app_yaml_config):
+    async def run():
+        engine, maker = await _db(tmp_path)
+        async with maker() as session:
+            player = await _seed(session)
+            session.add(CycleBoundary(source_key="cycle", boundary_at=NOW - timedelta(hours=1), description="cycle"))
+            await session.commit()
+
+        state = FSMContext(
+            storage=MemoryStorage(),
+            key=StorageKey(bot_id=1, chat_id=1, user_id=1),
+        )
+        await state.set_state(ManualContributionStates.entering_comment)
+        await state.update_data(
+            player_id=player.id,
+            player_name=player.name,
+            player_tag=player.player_tag,
+            points=25,
+            comment="Помощь клану",
+            operation_token="wrong-state-token",
+        )
+        callback = FakeCallback("manual_contribution:confirm:wrong-state-token", user_id=1, username="admin")
+
+        await manual_contribution_callback(callback, state, _ctx(app_yaml_config, maker))
+
+        assert callback.answer.call_args.args[0] == "Эта операция устарела. Начните начисление заново."
+        async with maker() as session:
+            assert await session.scalar(select(func.count(ManualContributionAdjustment.id))) == 0
+        await engine.dispose()
+
+    asyncio.run(run())
 
 def test_manual_contribution_confirm_total_includes_new_and_previous(tmp_path, app_yaml_config):
     async def run():
@@ -220,12 +306,12 @@ def test_manual_contribution_access_denied_does_not_mutate_fsm_or_db(tmp_path, a
         cb = FakeCallback("manual_contribution:player:1", user_id=999)
         await manual_contribution_callback(cb, state, ctx)
         assert cb.answer.call_args.args[0] == "⛔ Недостаточно прав"
-        assert await state.get_state() == str(ManualContributionStates.entering_points)
+        assert await state.get_state() == ManualContributionStates.entering_points.state
 
         msg = FakeMessage("25", user_id=999)
         await manual_contribution_points(msg, state, ctx)
         assert msg.answer.call_args.args[0] == "⛔ Недостаточно прав"
-        assert await state.get_state() == str(ManualContributionStates.entering_points)
+        assert await state.get_state() == ManualContributionStates.entering_points.state
         assert (await state.get_data())["player_id"] == 123
         async with maker() as session:
             assert await session.scalar(select(func.count(ManualContributionAdjustment.id))) == 0
@@ -300,7 +386,7 @@ def test_manual_contribution_points_valid_values(value, expected, tmp_path, app_
         engine, maker = await _db(tmp_path); state = FakeState(); await state.set_state(ManualContributionStates.entering_points); await state.update_data(player_id=1, player_tag="#P1", player_name="P")
         msg = FakeMessage(value, user_id=1)
         await manual_contribution_points(msg, state, _ctx(app_yaml_config, maker))
-        assert await state.get_state() == str(ManualContributionStates.entering_comment)
+        assert await state.get_state() == ManualContributionStates.entering_comment.state
         assert (await state.get_data())["points"] == expected
         await engine.dispose()
     asyncio.run(run())
@@ -313,7 +399,7 @@ def test_manual_contribution_points_invalid_values_keep_state(value, tmp_path, a
         msg = FakeMessage(value, user_id=1)
         await manual_contribution_points(msg, state, _ctx(app_yaml_config, maker))
         assert msg.answer.call_args.args[0] == "Введите целое количество баллов от 1 до 10000."
-        assert await state.get_state() == str(ManualContributionStates.entering_points)
+        assert await state.get_state() == ManualContributionStates.entering_points.state
         assert (await state.get_data())["player_tag"] == "#P1"
         async with maker() as session: assert await session.scalar(select(func.count(ManualContributionAdjustment.id))) == 0
         await engine.dispose()
@@ -327,7 +413,7 @@ def test_manual_contribution_comment_valid_values(comment, stored, tmp_path, app
         msg = FakeMessage(comment, user_id=1)
         await manual_contribution_comment(msg, state, _ctx(app_yaml_config, maker))
         data = await state.get_data()
-        assert await state.get_state() == str(ManualContributionStates.confirming)
+        assert await state.get_state() == ManualContributionStates.confirming.state
         assert data["comment"] == stored and data["operation_token"]
         text = msg.answer.call_args.args[0]
         assert "P (#P1)" in text and "Баллы: +25" in text and f"Причина: {stored}" in text
@@ -345,7 +431,7 @@ def test_manual_contribution_comment_invalid_values_keep_state(comment, tmp_path
         msg = FakeMessage(comment, user_id=1)
         await manual_contribution_comment(msg, state, _ctx(app_yaml_config, maker))
         assert msg.answer.call_args.args[0] == "Комментарий должен содержать от 3 до 500 символов."
-        assert await state.get_state() == str(ManualContributionStates.entering_comment)
+        assert await state.get_state() == ManualContributionStates.entering_comment.state
         assert (await state.get_data())["points"] == 25
         async with maker() as session: assert await session.scalar(select(func.count(ManualContributionAdjustment.id))) == 0
         await engine.dispose()
@@ -360,9 +446,9 @@ def test_manual_contribution_navigation_cancel_and_stale_callbacks(tmp_path, app
         ctx = _ctx(app_yaml_config, maker); state = FakeState()
         await state.set_state(ManualContributionStates.choosing_player)
         back = FakeCallback("manual_contribution:back", user_id=1); await manual_contribution_callback(back, state, ctx); assert await state.get_state() is None
-        await state.set_state(ManualContributionStates.entering_points); b1=FakeCallback("manual_contribution:back", user_id=1); await manual_contribution_callback(b1,state,ctx); assert await state.get_state()==str(ManualContributionStates.choosing_player)
-        await state.set_state(ManualContributionStates.entering_comment); b2=FakeCallback("manual_contribution:back", user_id=1); await manual_contribution_callback(b2,state,ctx); assert await state.get_state()==str(ManualContributionStates.entering_points)
-        await state.set_state(ManualContributionStates.confirming); b3=FakeCallback("manual_contribution:back", user_id=1); await manual_contribution_callback(b3,state,ctx); assert await state.get_state()==str(ManualContributionStates.entering_comment)
+        await state.set_state(ManualContributionStates.entering_points); b1=FakeCallback("manual_contribution:back", user_id=1); await manual_contribution_callback(b1,state,ctx); assert await state.get_state()==ManualContributionStates.choosing_player.state
+        await state.set_state(ManualContributionStates.entering_comment); b2=FakeCallback("manual_contribution:back", user_id=1); await manual_contribution_callback(b2,state,ctx); assert await state.get_state()==ManualContributionStates.entering_points.state
+        await state.set_state(ManualContributionStates.confirming); b3=FakeCallback("manual_contribution:back", user_id=1); await manual_contribution_callback(b3,state,ctx); assert await state.get_state()==ManualContributionStates.entering_comment.state
         await state.update_data(player_id=p.id, player_name="Player", player_tag="#P1", points=10)
         m1=FakeMessage("first", user_id=1); await manual_contribution_comment(m1,state,ctx); old=(await state.get_data())["operation_token"]
         await state.set_state(ManualContributionStates.entering_comment); await state.update_data(points=20)
@@ -444,6 +530,6 @@ def test_manual_contribution_db_error_rolls_back_logs_and_keeps_consistent_state
             await manual_contribution_callback(cb,state,_ctx(app_yaml_config,maker))
         assert cb.message.answer.call_args.args[0] == "❌ Не удалось начислить баллы. Попробуйте позже."
         assert "✅ Баллы начислены" not in cb.message.answer.call_args.args[0]
-        assert await state.get_state() == str(ManualContributionStates.confirming)
+        assert await state.get_state() == ManualContributionStates.confirming.state
         assert "Failed to create manual contribution adjustment" in caplog.text
     asyncio.run(run())
