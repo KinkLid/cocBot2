@@ -143,3 +143,13 @@ def test_alembic_upgrade_from_0010_preserves_existing_violations_and_legacy_rese
         assert conn.execute(sa.text("SELECT count(*) FROM violation_counter_resets")).scalar_one() == 1
         assert conn.execute(sa.text("SELECT reset_amount FROM violation_counter_resets")).scalar_one() is None
     engine.dispose()
+
+
+def test_readme_documents_clone_based_one_command_migration() -> None:
+    content = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    assert "Текущий автоматический режим" in content
+    assert "Режим после Git clone" in content
+    assert "sudo git clone <REPOSITORY_URL> /opt/cocbot" in content
+    assert "--use-existing-remote-clone" in content
+    assert "sudo -u cocbot /opt/cocbot/scripts/update_from_git.sh" in content
+    assert ".git" in content and "сохраняется" in content
