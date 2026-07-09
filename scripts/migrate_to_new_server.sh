@@ -76,6 +76,13 @@ remote_root() {
     ssh "${SSH_TARGET}" sudo -n "$@"
   fi
 }
+remote_git() {
+  remote_root \
+    git \
+    -c "safe.directory=${REMOTE_DIR}" \
+    -C "${REMOTE_DIR}" \
+    "$@"
+}
 remote_as_service_user() {
   local command_text="$1"
 
@@ -176,7 +183,17 @@ REMOTE_DIR="${REMOTE_DIR:-${DEFAULT_REMOTE_DIR}}"
 
 cd "${PROJECT_ROOT}"
 for f in .env config.yaml app/main.py alembic.ini scripts/install_on_server.sh; do [[ -e "$f" ]] || die_before_cutover "Required file is missing: $f"; done
-for c in python3.12 ssh sha256sum flock systemctl pgrep; do need_cmd "$c"; done
+for c in \
+  python3.12 \
+  ssh \
+  scp \
+  sha256sum \
+  flock \
+  systemctl \
+  pgrep
+do
+  need_cmd "$c"
+done
 if [[ "${USE_EXISTING_REMOTE_CLONE}" == "1" ]]; then
   need_cmd git
   [[ -d .git ]] || die_before_cutover "Локальный каталог не является Git-репозиторием: ${PROJECT_ROOT}"
@@ -191,7 +208,6 @@ if [[ "${USE_EXISTING_REMOTE_CLONE}" == "1" ]]; then
   ORIGIN_COMMIT="$(git rev-parse "origin/${SOURCE_BRANCH}")"
   [[ "${GIT_COMMIT}" == "${ORIGIN_COMMIT}" ]] || die_before_cutover "Локальный commit не совпадает с origin/<ветка>. Сначала отправьте изменения в удалённый репозиторий."
 else
-  need_cmd scp
   need_cmd rsync
 fi
 if [[ "${COCBOT_TEST_LOCAL_UID:-$(id -u)}" != "0" ]]; then
@@ -224,19 +240,15 @@ REMOTE_IP="$(remote_run 'curl -4 -fsS https://api.ipify.org' 2>/dev/null || true
 if [[ -n "${REMOTE_IP}" ]]; then log "Публичный IPv4 нового сервера: ${REMOTE_IP}"; else warn "Не удалось определить публичный IPv4 нового сервера"; fi
 
 if [[ "${USE_EXISTING_REMOTE_CLONE}" == "1" ]]; then
-  if ! remote_root bash -se <<EOF_REMOTE_GIT_CHECK
-set -Eeuo pipefail
-[[ -d '${REMOTE_DIR}' ]]
-[[ -d '${REMOTE_DIR}/.git' ]]
-[[ -f '${REMOTE_DIR}/app/main.py' ]]
-[[ -f '${REMOTE_DIR}/scripts/install_on_server.sh' ]]
-git -C '${REMOTE_DIR}' rev-parse --is-inside-work-tree >/dev/null
-EOF_REMOTE_GIT_CHECK
-  then
+  if ! remote_root test -d "${REMOTE_DIR}" -a -d "${REMOTE_DIR}/.git" -a -f "${REMOTE_DIR}/app/main.py" -a -f "${REMOTE_DIR}/scripts/install_on_server.sh"; then
     die_before_cutover "Удалённый каталог не является Git-репозиторием: ${REMOTE_DIR}"
   fi
-  remote_root bash -lc "git -C '${REMOTE_DIR}' diff --quiet" || die_before_cutover "В удалённом репозитории есть изменения tracked-файлов."
-  remote_root bash -lc "git -C '${REMOTE_DIR}' diff --cached --quiet" || die_before_cutover "В удалённом репозитории есть изменения tracked-файлов."
+  remote_git rev-parse --is-inside-work-tree >/dev/null || die_before_cutover "Удалённый каталог не является Git-репозиторием: ${REMOTE_DIR}"
+  remote_git diff --quiet || die_before_cutover "В удалённом репозитории есть изменения tracked-файлов."
+  remote_git diff --cached --quiet || die_before_cutover "В удалённом репозитории есть изменения tracked-файлов."
+  if ! remote_git ls-remote --exit-code origin >/dev/null; then
+    die_before_cutover       "Root на новом сервере не имеет доступа к Git origin. Настройте read-only deploy key или HTTPS credential."
+  fi
 fi
 
 if [[ "${DRY_RUN}" == "1" ]]; then
@@ -270,6 +282,20 @@ with open(path,'w',encoding='utf-8') as f:
 PY
 fi
 
+if [[ "${USE_EXISTING_REMOTE_CLONE}" == "1" ]]; then
+  remote_git fetch origin "${SOURCE_BRANCH}" --prune
+  remote_git checkout \
+    -B "${SOURCE_BRANCH}" \
+    "origin/${SOURCE_BRANCH}"
+  REMOTE_GIT_COMMIT="$(
+    remote_git rev-parse HEAD
+  )"
+  [[ "${REMOTE_GIT_COMMIT}" == "${GIT_COMMIT}" ]] || die_before_cutover "Remote git commit mismatch"
+  remote_git branch \
+    --set-upstream-to="origin/${SOURCE_BRANCH}" \
+    "${SOURCE_BRANCH}"
+fi
+
 log "Готовлю новый сервер"
 scp "${SCRIPT_DIR}/prepare_remote_server.sh" "${SSH_TARGET}:${REMOTE_STAGE}.prepare_remote_server.sh" >/dev/null
 remote_root bash -se <<EOF_REMOTE_PREP
@@ -282,11 +308,6 @@ chmod 700 '${REMOTE_STAGE}/code' '${REMOTE_STAGE}/config'
 EOF_REMOTE_PREP
 
 if [[ "${USE_EXISTING_REMOTE_CLONE}" == "1" ]]; then
-  remote_as_service_user "git -C '${REMOTE_DIR}' fetch origin '${SOURCE_BRANCH}' --prune"
-  remote_as_service_user "git -C '${REMOTE_DIR}' checkout -B '${SOURCE_BRANCH}' 'origin/${SOURCE_BRANCH}'"
-  REMOTE_GIT_COMMIT="$(remote_as_service_user "git -C '${REMOTE_DIR}' rev-parse HEAD")"
-  [[ "${REMOTE_GIT_COMMIT}" == "${GIT_COMMIT}" ]] || die_before_cutover "Remote git commit mismatch"
-  remote_as_service_user "git -C '${REMOTE_DIR}' branch --set-upstream-to=\"origin/${SOURCE_BRANCH}\" '${SOURCE_BRANCH}'"
   scp "${TMP_ENV}" "${SSH_TARGET}:${REMOTE_STAGE}/config/.env" >/dev/null
   scp "${PROJECT_ROOT}/config.yaml" "${SSH_TARGET}:${REMOTE_STAGE}/config/config.yaml" >/dev/null
   remote_root bash -se <<EOF_REMOTE_INSTALL_CLONE

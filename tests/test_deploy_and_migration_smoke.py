@@ -27,9 +27,34 @@ def test_deploy_remote_uses_project_root_not_cwd() -> None:
 
 def test_update_from_git_does_not_git_clean_runtime_files() -> None:
     content = (REPO_ROOT / "scripts/update_from_git.sh").read_text(encoding="utf-8")
-    assert "git reset --hard" in content
+    assert "git_safe reset --hard" in content
     assert "git clean -fd" not in content
 
+
+
+def test_update_from_git_requires_root() -> None:
+    content = (REPO_ROOT / "scripts/update_from_git.sh").read_text(encoding="utf-8")
+    assert '[[ "$(id -u)" == "0" ]]' in content
+    assert 'Run this script as root or through sudo' in content
+
+
+def test_update_from_git_uses_safe_directory() -> None:
+    content = (REPO_ROOT / "scripts/update_from_git.sh").read_text(encoding="utf-8")
+    assert 'git_safe()' in content
+    assert '-c "safe.directory=${PROJECT_DIR}"' in content
+    assert 'git_safe rev-parse --abbrev-ref HEAD' in content
+    assert 'git_safe fetch --all --prune' in content
+    assert 'git_safe reset --hard "origin/${CURRENT_BRANCH}"' in content
+    assert 'git clean' not in content
+
+
+def test_update_from_git_runs_install_as_root() -> None:
+    content = (REPO_ROOT / "scripts/update_from_git.sh").read_text(encoding="utf-8")
+    assert 'sudo -u cocbot' not in content
+    assert 'runuser -u cocbot' not in content
+    assert 'su -' not in content
+    assert 'chmod +x "${PROJECT_DIR}/scripts/install_on_server.sh"' in content
+    assert 'bash "${PROJECT_DIR}/scripts/install_on_server.sh"' in content
 
 def test_install_script_preserves_existing_env_and_config() -> None:
     content = (REPO_ROOT / "scripts/install_on_server.sh").read_text(encoding="utf-8")
@@ -151,5 +176,6 @@ def test_readme_documents_clone_based_one_command_migration() -> None:
     assert "Режим после Git clone" in content
     assert "sudo git clone <REPOSITORY_URL> /opt/cocbot" in content
     assert "--use-existing-remote-clone" in content
-    assert "sudo -u cocbot /opt/cocbot/scripts/update_from_git.sh" in content
+    assert "sudo /opt/cocbot/scripts/update_from_git.sh" in content
+    assert "sudo -u cocbot" not in content
     assert ".git" in content and "сохраняется" in content

@@ -24,21 +24,28 @@ if [[ $# -gt 1 ]]; then
 fi
 
 PROJECT_DIR="${1:-${DEFAULT_PROJECT_DIR}}"
+[[ "$(id -u)" == "0" ]] || err   "Run this script as root or through sudo"
 [[ -d "${PROJECT_DIR}" ]] || err "Project directory does not exist: ${PROJECT_DIR}"
 [[ -d "${PROJECT_DIR}/.git" ]] || err "${PROJECT_DIR} is not a git repository"
 
-cd "${PROJECT_DIR}"
-
 command -v git >/dev/null 2>&1 || err "git not found"
 
-CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+git_safe() {
+  git     -c "safe.directory=${PROJECT_DIR}"     -C "${PROJECT_DIR}"     "$@"
+}
+
+CURRENT_BRANCH="$(
+  git_safe rev-parse --abbrev-ref HEAD
+)"
 [[ "${CURRENT_BRANCH}" != "HEAD" ]] || err "Detached HEAD is not supported"
 
 echo "[update_from_git] Fetching latest changes"
-git fetch --all --prune
+git_safe fetch --all --prune
 
 echo "[update_from_git] Resetting local branch to origin/${CURRENT_BRANCH}"
-git reset --hard "origin/${CURRENT_BRANCH}"
+git_safe reset --hard "origin/${CURRENT_BRANCH}"
 
-chmod +x scripts/install_on_server.sh
-bash scripts/install_on_server.sh "${PROJECT_DIR}"
+chmod +x "${PROJECT_DIR}/scripts/install_on_server.sh"
+
+bash "${PROJECT_DIR}/scripts/install_on_server.sh" \
+  "${PROJECT_DIR}"

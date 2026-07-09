@@ -42,6 +42,32 @@ def test_new_shell_safety(script: str) -> None:
         assert fn in content
 
 
+
+def test_scp_is_required_in_both_migration_modes() -> None:
+    c = read("scripts/migrate_to_new_server.sh")
+    preflight_start = c.index('for c in \\')
+    clone_branch = c.index('if [[ "${USE_EXISTING_REMOTE_CLONE}" == "1" ]]', preflight_start)
+    common = c[preflight_start:clone_branch]
+    assert 'need_cmd "$c"' in common
+    assert 'scp' in common
+    assert c.index('scp', preflight_start) < clone_branch
+
+
+def test_existing_clone_missing_scp_fails_before_old_service_stop(repo_env_files, tmp_path: Path) -> None:
+    fake, log = make_fake_bin(tmp_path)
+    (fake / "scp").unlink()
+    for name in ["bash", "dirname", "pwd", "date", "mktemp", "chmod", "cp", "mkdir", "cat", "sed", "rm", "tee"]:
+        target = Path("/usr/bin") / name
+        if target.exists():
+            (fake / name).symlink_to(target)
+    env = fake_env(fake, {"GIT_FAKE_OK": "1"})
+    env["PATH"] = str(fake)
+    res = run(["/bin/bash", str(SCRIPTS / "migrate_to_new_server.sh"), "--use-existing-remote-clone", "testuser@example", "/opt/cocbot"], env=env)
+    calls = log.read_text(encoding="utf-8") if log.exists() else ""
+    assert res.returncode != 0
+    assert "Required command not found: scp" in res.stderr
+    assert "systemctl stop cocbot" not in calls
+
 def test_migration_script_required_order_and_safety() -> None:
     c = read("scripts/migrate_to_new_server.sh")
     assert "set -x" not in c
@@ -202,11 +228,15 @@ case "$cmd" in
   *"check_server_health.py"*"--offline"*) echo "$cmd" >> "$LOG"; if [[ -n "${{REQUIRE_RUNUSER_HEALTH:-}}" && "$cmd" != *"runuser -u cocbot -- bash -lc"* ]]; then echo env denied >&2; exit 13; fi; exit 0;;
   *"systemctl is-active cocbot"*) {'echo inactive; exit 0' if fail_remote_active else 'echo active; exit 0'};;
   *"journalctl"*) if [[ -n "${{REMOTE_JOURNAL_FAIL:-}}" ]]; then echo permission denied >&2; exit 7; fi; printf '%s\n' "${{REMOTE_JOURNAL_TEXT:-}}"; exit 0;;
-  *"git -C "*" rev-parse --is-inside-work-tree"*) if [[ -n "${{REMOTE_GIT_MISSING:-}}" ]]; then exit 1; fi; echo true; exit 0;;
-  *"test -d "*"&& test -d "*"&& test -f "*"&& test -f "*) if [[ -n "${{REMOTE_GIT_MISSING:-}}" ]]; then exit 1; fi; exit 0;;
-  *"git -C "*" diff --quiet"*) if [[ -n "${{REMOTE_GIT_DIRTY:-}}" ]]; then exit 1; fi; exit 0;;
-  *"git -C "*" diff --cached --quiet"*) exit 0;;
-  *"git -C "*" rev-parse HEAD"*) echo "${{REMOTE_GIT_COMMIT:-abc}}"; exit 0;;
+  *"rev-parse --is-inside-work-tree"*) if [[ -n "${{REMOTE_GIT_MISSING:-}}" ]]; then exit 1; fi; echo true; exit 0;;
+  *"test -d"*".git"*) if [[ -n "${{REMOTE_GIT_MISSING:-}}" ]]; then exit 1; fi; exit 0;;
+  *"diff --cached --quiet"*) exit 0;;
+  *"diff --quiet"*) if [[ -n "${{REMOTE_GIT_DIRTY:-}}" ]]; then exit 1; fi; exit 0;;
+  *"ls-remote --exit-code origin"*) if [[ -n "${{REMOTE_GIT_ORIGIN_DENIED:-}}" ]]; then exit 1; fi; exit 0;;
+  *"fetch origin main --prune"*) exit 0;;
+  *"checkout -B main origin/main"*) exit 0;;
+  *"rev-parse HEAD"*) echo "${{REMOTE_GIT_COMMIT:-abc}}"; exit 0;;
+  *"branch --set-upstream-to=origin/main main"*) exit 0;;
   chown*) touch "$STATE/remote_backup_chowned"; exit 0;;
   chmod*) touch "$STATE/remote_backup_chmodded"; exit 0;;
 esac
@@ -535,6 +565,43 @@ def _existing_clone_branch(c: str) -> str:
     return c[start:end]
 
 
+
+def test_existing_clone_uses_remote_root_git_with_safe_directory() -> None:
+    c = read("scripts/migrate_to_new_server.sh")
+    assert 'remote_git()' in c
+    assert 'git \\' in c and '-c "safe.directory=${REMOTE_DIR}"' in c
+    for git_call in [
+        'remote_git fetch origin "${SOURCE_BRANCH}" --prune',
+        'remote_git checkout \\',
+        'remote_git rev-parse HEAD',
+        'remote_git diff --quiet',
+        'remote_git diff --cached --quiet',
+        'remote_git ls-remote --exit-code origin',
+    ]:
+        assert git_call in c
+    branch = _existing_clone_branch(c)
+    assert 'remote_as_service_user "git' not in c
+    assert 'runuser -u cocbot' not in branch
+
+
+def test_existing_clone_checks_origin_access_before_cutover() -> None:
+    c = read("scripts/migrate_to_new_server.sh")
+    assert c.index('ls-remote --exit-code origin') < c.index('local_root systemctl stop "${SERVICE_NAME}"')
+
+
+def test_existing_clone_git_sync_happens_before_remote_prepare() -> None:
+    c = read("scripts/migrate_to_new_server.sh")
+    order = [
+        'remote_git ls-remote --exit-code origin',
+        'remote_git fetch origin "${SOURCE_BRANCH}" --prune',
+        'remote_git checkout \\',
+        'remote_git rev-parse HEAD',
+        'prepare_remote_server.sh',
+        'local_root systemctl stop "${SERVICE_NAME}"',
+    ]
+    positions = [c.index(n) for n in order]
+    assert positions == sorted(positions)
+
 def test_existing_clone_mode_does_not_rsync_source_code() -> None:
     branch = _existing_clone_branch(read("scripts/migrate_to_new_server.sh"))
     assert "${REMOTE_STAGE}/code/" not in branch
@@ -553,7 +620,7 @@ def test_existing_clone_mode_preserves_remote_git_directory() -> None:
 def test_existing_clone_mode_checks_remote_repository_before_cutover() -> None:
     c = read("scripts/migrate_to_new_server.sh")
     stop = c.index('local_root systemctl stop "${SERVICE_NAME}"')
-    for needle in ["[[ -d '${REMOTE_DIR}/.git' ]]", "git -C '${REMOTE_DIR}' diff --quiet", "git -C '${REMOTE_DIR}' diff --cached --quiet"]:
+    for needle in ["remote_root test -d", "remote_git diff --quiet", "remote_git diff --cached --quiet"]:
         assert c.index(needle) < stop
 
 
@@ -571,12 +638,12 @@ def test_existing_clone_mode_checks_source_commit_is_pushed() -> None:
 
 def test_existing_clone_mode_checks_out_exact_source_commit() -> None:
     c = read("scripts/migrate_to_new_server.sh")
-    branch = _existing_clone_branch(c)
-    assert 'git -C \'${REMOTE_DIR}\' fetch origin \'${SOURCE_BRANCH}\' --prune' in branch
-    assert 'git -C \'${REMOTE_DIR}\' checkout -B \'${SOURCE_BRANCH}\' \'origin/${SOURCE_BRANCH}\'' in branch
-    assert 'git -C \'${REMOTE_DIR}\' rev-parse HEAD' in branch
-    assert '[[ "${REMOTE_GIT_COMMIT}" == "${GIT_COMMIT}" ]]' in branch
-    assert '--set-upstream-to=\\"origin/${SOURCE_BRANCH}\\"' in branch
+    assert 'remote_git fetch origin "${SOURCE_BRANCH}" --prune' in c
+    assert 'remote_git checkout \\' in c
+    assert '"origin/${SOURCE_BRANCH}"' in c
+    assert 'remote_git rev-parse HEAD' in c
+    assert '[[ "${REMOTE_GIT_COMMIT}" == "${GIT_COMMIT}" ]]' in c
+    assert '--set-upstream-to="origin/${SOURCE_BRANCH}"' in c
 
 
 def test_existing_clone_mode_keeps_database_cutover_order() -> None:
