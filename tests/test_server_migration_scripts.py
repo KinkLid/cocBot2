@@ -43,6 +43,37 @@ def test_new_shell_safety(script: str) -> None:
 
 
 
+
+def test_migration_uses_project_venv_python_for_local_project_imports() -> None:
+    c = read("scripts/migrate_to_new_server.sh")
+    assert 'PROJECT_PYTHON="${PROJECT_ROOT}/.venv/bin/python"' in c
+    assert "PYTHON_BIN" in c
+    db_start = c.index('DB_PATH="$("${PYTHON_BIN}" - "${PROJECT_ROOT}" <<\'PY\'')
+    db_end = c.index('[[ -f "${DB_PATH}" ]]', db_start)
+    db_block = c[db_start:db_end]
+    assert '"${PYTHON_BIN}"' in db_block
+    assert 'python3.12 - "${PROJECT_ROOT}"' not in db_block
+
+
+def test_migration_checks_project_python_imports_before_old_service_stop() -> None:
+    c = read("scripts/migrate_to_new_server.sh")
+    import_check = c.index("import sqlalchemy")
+    settings_check = c.index("from app.config.settings import Settings", import_check)
+    stop = c.index('local_root systemctl stop "${SERVICE_NAME}"')
+    assert import_check < stop
+    assert settings_check < stop
+    assert "Не удалось импортировать зависимости проекта выбранным Python." in c[:stop]
+
+
+def test_migration_does_not_require_system_python_sqlalchemy_when_venv_exists(repo_env_files, tmp_path: Path) -> None:
+    fake, log = make_fake_bin(tmp_path)
+    res = run(["bash", str(SCRIPTS / "migrate_to_new_server.sh"), "--dry-run", "testuser@example", "/opt/cocbot"], env=fake_env(fake))
+    calls = log.read_text(encoding="utf-8")
+    assert res.returncode == 0, res.stderr
+    assert "venv-python - " in calls
+    assert "python3.12 - " not in calls
+    assert "Dry-run завершён. Изменения не применялись." in res.stdout
+
 def test_scp_is_required_in_both_migration_modes() -> None:
     c = read("scripts/migrate_to_new_server.sh")
     preflight_start = c.index('for c in \\')
@@ -334,7 +365,18 @@ def repo_env_files():
     venv_py = REPO_ROOT / ".venv/bin/python"
     old_venv_py = venv_py.read_bytes() if venv_py.exists() else None
     venv_py.parent.mkdir(parents=True, exist_ok=True)
-    venv_py.write_text("#!/usr/bin/env bash\necho \"venv-python $*\" >> \"$LOG\"\nif [[ \"$*\" == *check_server_health.py* ]]; then echo \"$*\" >> \"$LOG\"; fi\nif [[ \"$*\" == *alembic*check* ]]; then echo No new upgrade operations detected; fi\nexit 0\n", encoding="utf-8")
+    venv_py.write_text(
+        "#!/usr/bin/env bash\n"
+        "echo \"venv-python $*\" >> \"$LOG\"\n"
+        "if [[ \"$*\" == *check_server_health.py* ]]; then echo \"$*\" >> \"$LOG\"; fi\n"
+        "if [[ \"$*\" == *alembic*check* ]]; then echo No new upgrade operations detected; fi\n"
+        "if [[ \"$*\" == *scripts/backup_sqlite.py* ]]; then out=; prev=; for a in \"$@\"; do [[ \"$prev\" == --output ]] && out=\"$a\"; prev=\"$a\"; done; [[ -n \"$out\" ]] && mkdir -p \"$(dirname \"$out\")\" && printf backup > \"$out\"; echo '{\"path\":\"'\"$out\"'\",\"sha256\":\"abc\",\"active_players\":50,\"integrity\":\"ok\"}'; exit 0; fi\n"
+        "if [[ \"${1:-}\" == \"-\" ]]; then script=$(cat); if [[ \"$script\" == *make_url* ]]; then echo \""
+        + str(REPO_ROOT)
+        + "/data/clanbot.sqlite3\"; fi; fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
     venv_py.chmod(0o755)
     mig.unlink(missing_ok=True)
     yield
