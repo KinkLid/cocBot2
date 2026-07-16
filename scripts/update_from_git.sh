@@ -24,8 +24,11 @@ if [[ $# -gt 1 ]]; then
 fi
 
 PROJECT_DIR="${1:-${DEFAULT_PROJECT_DIR}}"
+SERVICE_USER="cocbot"
 [[ "$(id -u)" == "0" ]] || err   "Run this script as root or through sudo"
 [[ -d "${PROJECT_DIR}" ]] || err "Project directory does not exist: ${PROJECT_DIR}"
+id "${SERVICE_USER}" >/dev/null 2>&1 || err \
+  "Service user does not exist: ${SERVICE_USER}"
 [[ -d "${PROJECT_DIR}/.git" ]] || err "${PROJECT_DIR} is not a git repository"
 
 command -v git >/dev/null 2>&1 || err "git not found"
@@ -48,4 +51,5 @@ git_safe reset --hard "origin/${CURRENT_BRANCH}"
 chmod +x "${PROJECT_DIR}/scripts/install_on_server.sh"
 
 bash "${PROJECT_DIR}/scripts/install_on_server.sh" \
+  --service-user "${SERVICE_USER}" \
   "${PROJECT_DIR}"

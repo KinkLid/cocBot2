@@ -56,6 +56,31 @@ def test_update_from_git_runs_install_as_root() -> None:
     assert 'chmod +x "${PROJECT_DIR}/scripts/install_on_server.sh"' in content
     assert 'bash "${PROJECT_DIR}/scripts/install_on_server.sh"' in content
 
+
+def test_update_from_git_passes_cocbot_service_user() -> None:
+    content = (REPO_ROOT / "scripts/update_from_git.sh").read_text(encoding="utf-8")
+    assert 'SERVICE_USER="cocbot"' in content
+    assert 'id "${SERVICE_USER}"' in content
+    expected_install_call = '''bash "${PROJECT_DIR}/scripts/install_on_server.sh" \\
+  --service-user "${SERVICE_USER}" \\
+  "${PROJECT_DIR}"'''
+    assert expected_install_call in content
+    assert 'sudo -u cocbot' not in content
+    assert 'runuser -u cocbot' not in content
+    assert 'su - cocbot' not in content
+
+
+def test_update_from_git_cannot_rewrite_unit_as_root() -> None:
+    update_script = (REPO_ROOT / "scripts/update_from_git.sh").read_text(encoding="utf-8")
+    install_script = (REPO_ROOT / "scripts/install_on_server.sh").read_text(encoding="utf-8")
+    systemd_template = (REPO_ROOT / "deploy/systemd/cocbot.service.template").read_text(encoding="utf-8")
+
+    assert '[[ "$(id -u)" == "0" ]]' in update_script
+    assert 'SERVICE_USER="$(id -un)"' in install_script
+    assert '--service-user "${SERVICE_USER}"' in update_script
+    assert 'SERVICE_USER="cocbot"' in update_script
+    assert 'User=__SERVICE_USER__' in systemd_template
+
 def test_install_script_preserves_existing_env_and_config() -> None:
     content = (REPO_ROOT / "scripts/install_on_server.sh").read_text(encoding="utf-8")
     assert 'if [[ ! -f ".env" ]]; then' in content
