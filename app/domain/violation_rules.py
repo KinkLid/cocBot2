@@ -103,29 +103,24 @@ def resolve_allowed_targets_for_attack(
     if any(not is_tripled(position) for position in base_positions):
         return AllowedTargets(positions=frozenset(base_positions))
 
-    nearest_below = next(
-        (
-            position
-            for position in roster_positions
-            if position > base_max_position and not is_tripled(position)
-        ),
-        None,
-    )
-    if nearest_below is not None:
-        return AllowedTargets(positions=frozenset({nearest_below}))
+    untripled_positions = [
+        position
+        for position in roster_positions
+        if not is_tripled(position)
+    ]
+    if not untripled_positions:
+        return AllowedTargets(allow_any=True)
 
-    nearest_above = next(
-        (
-            position
-            for position in reversed(roster_positions)
-            if position < base_min_position and not is_tripled(position)
-        ),
-        None,
+    nearest_distance = min(
+        abs(position - attacker_position)
+        for position in untripled_positions
     )
-    if nearest_above is not None:
-        return AllowedTargets(positions=frozenset({nearest_above}))
-
-    return AllowedTargets(allow_any=True)
+    nearest_positions = frozenset(
+        position
+        for position in untripled_positions
+        if abs(position - attacker_position) == nearest_distance
+    )
+    return AllowedTargets(positions=nearest_positions)
 
 
 def evaluate_attack_violation(
