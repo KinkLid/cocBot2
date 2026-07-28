@@ -34,12 +34,13 @@ async def _seed_war(session, *, start=START, uid="war", cwl=False):
     return war
 
 
-async def _attack(session, war, position, seen, *, stars=3, attacker=13, order=None):
+async def _attack(session, war, position, seen, *, stars=3, attacker=12, order,
+                  attacker_tag="#F"):
     attack = Attack(
-        war_id=war.id, attacker_tag="#F", attacker_name="FELIKS", attacker_position=attacker,
+        war_id=war.id, attacker_tag=attacker_tag, attacker_name="FELIKS", attacker_position=attacker,
         attacker_town_hall=16, defender_tag=f"#E{position}", defender_name=f"E{position}",
         defender_position=position, defender_town_hall=16, stars=stars, destruction=100,
-        attack_order=position if order is None else order, observed_at=seen,
+        attack_order=order, observed_at=seen,
     )
     session.add(attack)
     await session.flush()
@@ -61,10 +62,11 @@ async def test_recalculation_feliks_removes_only_wrong_automatic_violation(sessi
     session.add(CycleBoundary(source_key="cycle", boundary_at=START - timedelta(days=1), description="cycle"))
     war = await _seed_war(session)
     before = START + timedelta(hours=1)
-    for position in range(11, 17):
-        await _attack(session, war, position, before, attacker=position)
-    nine = await _attack(session, war, 9, before + timedelta(minutes=1))
-    ten = await _attack(session, war, 10, before + timedelta(minutes=2))
+    for order, position in enumerate(range(11, 17), start=1):
+        await _attack(session, war, position, before, attacker=position, order=order,
+                      attacker_tag=f"#C{position}")
+    nine = await _attack(session, war, 9, before + timedelta(minutes=1), order=7)
+    ten = await _attack(session, war, 10, before + timedelta(minutes=2), order=8)
     v9 = await _violation(session, war, nine)
     await _violation(session, war, ten)
     await session.commit()
@@ -83,12 +85,12 @@ async def test_recalculation_feliks_removes_only_wrong_automatic_violation(sessi
 async def test_recalculation_creates_updates_and_preserves_non_positional(session, monkeypatch):
     session.add(CycleBoundary(source_key="cycle", boundary_at=START - timedelta(days=1), description="cycle"))
     war = await _seed_war(session)
-    missing = await _attack(session, war, 1, START + timedelta(minutes=1))
-    changed = await _attack(session, war, 30, START + timedelta(minutes=2))
+    missing = await _attack(session, war, 1, START + timedelta(minutes=1), order=1)
+    changed = await _attack(session, war, 30, START + timedelta(minutes=2), order=2)
     await _violation(session, war, changed, ViolationCode.ABOVE_SELF)
-    manual = await _attack(session, war, 2, START + timedelta(minutes=3))
+    manual = await _attack(session, war, 2, START + timedelta(minutes=3), order=3)
     manual_row = await _violation(session, war, manual, manual=True)
-    claimed = await _attack(session, war, 3, START + timedelta(minutes=4))
+    claimed = await _attack(session, war, 3, START + timedelta(minutes=4), order=4)
     claimed_row = await _violation(session, war, claimed, ViolationCode.CLAIMED_TARGET)
     await session.commit()
     monkeypatch.setattr("app.services.period.utcnow", lambda: START + timedelta(days=2))
@@ -110,9 +112,9 @@ async def test_recalculation_only_processes_regular_wars_in_current_cycle(sessio
     current = await _seed_war(session, uid="current")
     old = await _seed_war(session, uid="old", start=START - timedelta(days=2))
     cwl = await _seed_war(session, uid="cwl", cwl=True)
-    await _attack(session, current, 1, START + timedelta(minutes=1))
-    await _attack(session, old, 1, START - timedelta(days=2) + timedelta(minutes=1))
-    await _attack(session, cwl, 1, START + timedelta(minutes=1))
+    await _attack(session, current, 1, START + timedelta(minutes=1), order=1)
+    await _attack(session, old, 1, START - timedelta(days=2) + timedelta(minutes=1), order=1)
+    await _attack(session, cwl, 1, START + timedelta(minutes=1), order=1)
     await session.commit()
     monkeypatch.setattr("app.services.period.utcnow", lambda: START + timedelta(days=2))
 
@@ -125,8 +127,8 @@ async def test_recalculation_only_processes_regular_wars_in_current_cycle(sessio
 async def test_recalculation_sorts_mixed_naive_and_aware_observed_at(session, monkeypatch):
     session.add(CycleBoundary(source_key="cycle", boundary_at=START - timedelta(days=1), description="cycle"))
     war = await _seed_war(session)
-    first = await _attack(session, war, 12, START + timedelta(minutes=2))
-    await _attack(session, war, 13, (START + timedelta(minutes=1)).replace(tzinfo=None))
+    first = await _attack(session, war, 12, START + timedelta(minutes=2), order=2)
+    await _attack(session, war, 13, (START + timedelta(minutes=1)).replace(tzinfo=None), order=1)
     await session.commit()
     # SQLite reloads datetimes without timezone information; retain one aware value
     # in the same ORM collection to reproduce mixed application/persisted values.
@@ -139,28 +141,54 @@ async def test_recalculation_sorts_mixed_naive_and_aware_observed_at(session, mo
 
 
 @pytest.mark.asyncio
-async def test_recalculation_uses_id_to_order_attacks_at_same_time(session, monkeypatch):
+async def test_recalculation_uses_api_attack_order_at_same_time(session, monkeypatch):
     session.add(CycleBoundary(source_key="cycle", boundary_at=START - timedelta(days=1), description="cycle"))
     war = await _seed_war(session)
     seen = START + timedelta(hours=1)
-    for position in range(11, 17):
-        await _attack(session, war, position, seen - timedelta(minutes=1), attacker=position)
-    first = await _attack(session, war, 10, seen, attacker=13)
-    second = await _attack(session, war, 9, seen, attacker=13)
+    # Insert in reverse chronology: IDs and timestamps must not override API order.
+    nine = await _attack(session, war, 9, seen, attacker=12, order=8)
+    ten = await _attack(session, war, 10, seen, attacker=12, order=7)
+    for order, position in reversed(list(enumerate(range(11, 17), start=1))):
+        await _attack(session, war, position, seen, attacker=position, order=order,
+                      attacker_tag=f"#C{position}")
     await session.commit()
     monkeypatch.setattr("app.services.period.utcnow", lambda: START + timedelta(days=2))
 
     await ViolationRecalculationService(session).recalculate_current_cycle()
 
-    assert first.id < second.id
-    assert await session.scalar(select(Violation).where(Violation.attack_id == second.id)) is None
+    assert nine.id < ten.id
+    assert await session.scalar(select(Violation).where(Violation.attack_id == ten.id)) is None
+    assert await session.scalar(select(Violation).where(Violation.attack_id == nine.id)) is None
+
+
+@pytest.mark.asyncio
+async def test_later_ally_attack_does_not_retroactively_legalize_nine(session, monkeypatch):
+    war = await _seed_war(session)
+    seen = START + timedelta(hours=1)
+    for order, position in enumerate(range(11, 17), start=1):
+        await _attack(session, war, position, seen, attacker=position, order=order,
+                      attacker_tag=f"#C{position}")
+    nine = await _attack(session, war, 9, seen, attacker=12, order=7)
+    await _attack(
+        session, war, 10, seen, attacker=12, order=8, attacker_tag="#ALLY"
+    )
+    monkeypatch.setattr("app.services.violation_recalculation.utcnow", lambda: START + timedelta(hours=2))
+
+    attacks = list((await session.scalars(select(Attack).where(Attack.war_id == war.id))).all())
+    await ViolationRecalculationService(session).reconcile_war(
+        war, attacks, defender_positions=list(range(1, 31))
+    )
+
+    violation = await session.scalar(select(Violation).where(Violation.attack_id == nine.id))
+    assert violation is not None
+    assert violation.code == ViolationCode.ABOVE_SELF
 
 
 @pytest.mark.asyncio
 async def test_incomplete_roster_fails_before_existing_violation_is_deleted(session, monkeypatch):
     session.add(CycleBoundary(source_key="cycle", boundary_at=START - timedelta(days=1), description="cycle"))
     war = await _seed_war(session)
-    attack = await _attack(session, war, 13, START + timedelta(minutes=1))
+    attack = await _attack(session, war, 13, START + timedelta(minutes=1), order=1)
     existing = await _violation(session, war, attack)
     participant = await session.scalar(
         select(WarParticipant).where(
@@ -190,6 +218,36 @@ async def test_reconciliation_twice_in_same_session_reuses_created_row(session, 
     second = await service.reconcile_war(war, [attack], defender_positions=list(range(1, 31)))
 
     assert (first.created, second.created, second.unchanged) == (1, 0, 1)
+    assert len((await session.scalars(select(Violation))).all()) == 1
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_normalizes_sqlite_detected_at(session, monkeypatch):
+    war = await _seed_war(session)
+    observed_at = START + timedelta(minutes=1)
+    attack = await _attack(session, war, 1, observed_at, order=1)
+    monkeypatch.setattr("app.services.violation_recalculation.utcnow", lambda: START + timedelta(days=2))
+    service = ViolationRecalculationService(session)
+
+    first = await service.reconcile_war(war, [attack], defender_positions=list(range(1, 31)))
+    await session.flush()
+    created_violation = await session.scalar(
+        select(Violation).where(Violation.attack_id == attack.id)
+    )
+    session.expunge(created_violation)
+    reloaded_violation = await session.scalar(
+        select(Violation).where(Violation.attack_id == attack.id)
+    )
+    # SQLite drops timezone information while the original API timestamp was UTC-aware.
+    assert observed_at.tzinfo is UTC
+    assert reloaded_violation.detected_at.tzinfo is None
+    assert attack.observed_at.tzinfo is UTC
+
+    second = await service.reconcile_war(
+        war, [attack], defender_positions=list(range(1, 31))
+    )
+
+    assert (first.created, second.created, second.updated, second.unchanged) == (1, 0, 0, 1)
     assert len((await session.scalars(select(Violation))).all()) == 1
 
 
