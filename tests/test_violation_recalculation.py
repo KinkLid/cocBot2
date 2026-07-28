@@ -143,7 +143,7 @@ async def test_recalculation_uses_id_to_order_attacks_at_same_time(session, monk
     session.add(CycleBoundary(source_key="cycle", boundary_at=START - timedelta(days=1), description="cycle"))
     war = await _seed_war(session)
     seen = START + timedelta(hours=1)
-    for position in range(12, 17):
+    for position in range(11, 17):
         await _attack(session, war, position, seen - timedelta(minutes=1), attacker=position)
     first = await _attack(session, war, 10, seen, attacker=13)
     second = await _attack(session, war, 9, seen, attacker=13)
