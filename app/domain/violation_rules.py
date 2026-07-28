@@ -76,34 +76,41 @@ def evaluate_war_attack_violations(
         if attack.id not in in_window_ids:
             decisions[attack.id] = ViolationDecision(False)
 
+    triples_before: dict[int, frozenset[int]] = {}
+    tripled: set[int] = set()
+    for attack in in_window:
+        triples_before[attack.id] = frozenset(tripled)
+        if attack.stars == 3:
+            tripled.add(attack.defender_position)
+
     by_player: dict[str, list[AttackResult]] = {}
     for attack in in_window:
         by_player.setdefault(attack.attacker_tag, []).append(attack)
 
     for player_attacks in by_player.values():
         position = player_attacks[0].attacker_position
-        baseline = best_previous_results_by_defender(
-            player_attacks[0].observed_at,
-            ordered,
-            player_attacks[0].id,
-        )
         base = [target for target in roster if position - 1 <= target <= position + 3]
-        base_closed = bool(base) and all(
-            baseline.get(target) is not None and baseline[target].stars == 3
-            for target in base
-        )
-
-        if not base_closed:
-            allowed = frozenset(base)
-            for attack in player_attacks:
+        external_attacks: list[AttackResult] = []
+        for attack in player_attacks:
+            if attack.defender_position in base:
+                decisions[attack.id] = ViolationDecision(False)
+            elif base and all(
+                target in triples_before[attack.id] for target in base
+            ):
+                external_attacks.append(attack)
+            else:
+                # Crossing the boundary before the base is closed remains a
+                # violation even if a later attack completes the base.
                 decisions[attack.id] = _decision_for_positions(
-                    attack.attacker_position, attack.defender_position, allowed
+                    attack.attacker_position,
+                    attack.defender_position,
+                    frozenset(base),
                 )
+
+        if not external_attacks:
             continue
 
-        baseline_tripled = {
-            target for target, result in baseline.items() if result.stars == 3
-        }
+        baseline_tripled = set(triples_before[external_attacks[0].id])
         above = [target for target in reversed(roster) if target < position - 1]
         below = [target for target in roster if target > position + 3]
 
@@ -114,20 +121,19 @@ def evaluate_war_attack_violations(
                 continue
             player_triples = {
                 attack.defender_position
-                for attack in player_attacks
+                for attack in external_attacks
                 if attack.stars == 3
             }
             # The nearest still-open target is legal even when it is not
             # tripled. More distant targets become legal only through the
             # final, continuously tripled prefix.
-            allowed_external.add(required[0])
             for target in required:
+                allowed_external.add(target)
                 if target not in player_triples:
                     break
-                allowed_external.add(target)
 
-        for attack in player_attacks:
-            if attack.defender_position in base or attack.defender_position in baseline_tripled:
+        for attack in external_attacks:
+            if attack.defender_position in baseline_tripled:
                 decisions[attack.id] = ViolationDecision(False)
             else:
                 decisions[attack.id] = _decision_for_positions(

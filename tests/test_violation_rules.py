@@ -453,6 +453,76 @@ def test_reverse_lower_chain_requires_continuous_triples() -> None:
     assert not gap[101].violated
 
 
+@pytest.mark.parametrize("targets", [
+    ((9, 2), (10, 3), (8, 3)),
+    ((10, 3), (9, 2), (8, 3)),
+])
+def test_open_above_boundary_is_allowed_but_does_not_open_next_target(targets) -> None:
+    decisions = _sequence(*targets)
+
+    assert decisions[100].violated is False
+    assert decisions[101].violated is False
+    assert decisions[102].code == ViolationCode.ABOVE_SELF
+
+
+@pytest.mark.parametrize("targets", [
+    ((18, 2), (17, 3), (19, 3)),
+    ((17, 3), (18, 2), (19, 3)),
+])
+def test_open_lower_boundary_is_allowed_but_does_not_open_next_target(targets) -> None:
+    decisions = _sequence(*targets)
+
+    assert decisions[100].violated is False
+    assert decisions[101].violated is False
+    assert decisions[102].code == ViolationCode.TOO_LOW
+
+
+def _base_transition(*player_targets, ally_between=None):
+    start = datetime(2026, 7, 19, 8, tzinfo=UTC)
+    attacks = [
+        WarAttackResult(index, f"#ALLY{target}", target, target, 3, 100, start)
+        for index, target in enumerate([12, 13, 14, 15], 1)
+    ]
+    attacks.append(
+        WarAttackResult(100, "#F", 13, player_targets[0][0], player_targets[0][1], 100,
+                        start + timedelta(hours=1))
+    )
+    if ally_between is not None:
+        attacks.append(
+            WarAttackResult(101, "#ALLY", 16, 16, ally_between, 100,
+                            start + timedelta(hours=1, seconds=1))
+        )
+    attacks.append(
+        WarAttackResult(102, "#F", 13, player_targets[1][0], player_targets[1][1], 100,
+                        start + timedelta(hours=1, seconds=2))
+    )
+    return evaluate_war_attack_violations(start, range(1, 31), attacks)
+
+
+def test_player_closing_last_base_target_opens_external_boundary() -> None:
+    decisions = _base_transition((16, 3), (17, 2))
+    assert not decisions[100].violated
+    assert not decisions[102].violated
+
+
+def test_two_stars_on_last_base_target_does_not_open_boundary() -> None:
+    decisions = _base_transition((16, 2), (17, 3))
+    assert not decisions[100].violated
+    assert decisions[102].code == ViolationCode.TOO_LOW
+
+
+def test_external_attack_before_base_closure_stays_a_violation() -> None:
+    decisions = _base_transition((17, 3), (16, 3))
+    assert decisions[100].code == ViolationCode.TOO_LOW
+    assert not decisions[102].violated
+
+
+def test_ally_closing_last_base_target_between_attacks_opens_boundary() -> None:
+    decisions = _base_transition((15, 2), (17, 2), ally_between=3)
+    assert not decisions[100].violated
+    assert not decisions[102].violated
+
+
 @pytest.mark.parametrize("roster_size,attacker,targets", [
     (15, 1, ((5, 3),)),
     (30, 30, ((27, 3),)),

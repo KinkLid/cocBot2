@@ -27,6 +27,7 @@ class ViolationRecalculationResult:
     updated: int = 0
     deleted: int = 0
     unchanged: int = 0
+    created_attack_ids: tuple[int, ...] = ()
 
 
 class ViolationRecalculationService:
@@ -41,6 +42,7 @@ class ViolationRecalculationService:
         period = await self.periods.current_cycle()
         wars = await self.wars.list_regular_wars_in_period(period.start, period.end)
         created = updated = deleted = unchanged = attacks_checked = 0
+        created_attack_ids: list[int] = []
 
         for war in wars:
             defender_positions = sorted(
@@ -65,11 +67,13 @@ class ViolationRecalculationService:
             updated += result.updated
             deleted += result.deleted
             unchanged += result.unchanged
+            created_attack_ids.extend(result.created_attack_ids)
 
         await self.session.flush()
         return ViolationRecalculationResult(
             wars_processed=len(wars), attacks_checked=attacks_checked,
             created=created, updated=updated, deleted=deleted, unchanged=unchanged,
+            created_attack_ids=tuple(created_attack_ids),
         )
 
     async def reconcile_war(
@@ -85,6 +89,7 @@ class ViolationRecalculationService:
             is_cwl=war.war_type == WarType.CWL,
         )
         created = updated = deleted = unchanged = attacks_checked = 0
+        created_attack_ids: list[int] = []
         for attack in sorted(
             attacks, key=lambda item: (normalize_utc(item.observed_at), item.id)
         ):
@@ -118,6 +123,7 @@ class ViolationRecalculationService:
                     )
                 )
                 created += 1
+                created_attack_ids.append(attack.id)
             elif (
                 violation.code != decision.code
                 or violation.reason_text != decision.reason_text
@@ -141,4 +147,5 @@ class ViolationRecalculationService:
             updated=updated,
             deleted=deleted,
             unchanged=unchanged,
+            created_attack_ids=tuple(created_attack_ids),
         )

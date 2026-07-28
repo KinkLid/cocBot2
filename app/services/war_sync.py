@@ -158,11 +158,12 @@ class WarSyncService:
                     existing_attack.defender_town_hall = defender_th
                     existing_attack.stars = attack_dto.stars
                     existing_attack.destruction = attack_dto.destruction_percentage
-                    await self._reconcile_violation(
-                        war,
-                        existing_attack,
-                        defender_positions=self._defender_positions_from_members(enemy_side.members),
-                    )
+                    if war.war_type != WarType.REGULAR:
+                        await self._reconcile_violation(
+                            war,
+                            existing_attack,
+                            defender_positions=self._defender_positions_from_members(enemy_side.members),
+                        )
                     continue
                 observed_at = utcnow()
                 attack = await self.wars.add_attack(
@@ -183,11 +184,12 @@ class WarSyncService:
                         observed_at=observed_at,
                     )
                 )
-                await self._reconcile_violation(
-                    war,
-                    attack,
-                    defender_positions=self._defender_positions_from_members(enemy_side.members),
-                )
+                if war.war_type != WarType.REGULAR:
+                    await self._reconcile_violation(
+                        war,
+                        attack,
+                        defender_positions=self._defender_positions_from_members(enemy_side.members),
+                    )
         await self._reconcile_cwl_missed_attack_violations(
             war,
             own_side.members,
@@ -196,13 +198,16 @@ class WarSyncService:
             # A later attack can legalize an earlier attack by completing a
             # directional chain, so finish every sync with one war-wide pass.
             saved_attacks = await self.wars.list_attacks_for_war(war.id)
-            await ViolationRecalculationService(self.session).reconcile_war(
+            result = await ViolationRecalculationService(self.session).reconcile_war(
                 war,
                 saved_attacks,
                 defender_positions=self._defender_positions_from_members(
                     enemy_side.members
                 ),
             )
+            attacks_by_id = {attack.id: attack for attack in saved_attacks}
+            for attack_id in result.created_attack_ids:
+                await self._notify_attack_violation(war, attacks_by_id[attack_id])
         return war
 
 
@@ -323,28 +328,7 @@ class WarSyncService:
                     is_manual=False,
                 )
             )
-            current_cycle = await self.period_service.current_cycle(attack.observed_at)
-            violation_number = await self.active_violation_counter.count_for_player(
-                attack.attacker_tag, current_cycle.start, current_cycle.end
-            )
-            war_label = "ЛВК" if war.war_type == WarType.CWL else "КВ"
-            text = (
-                f"🚨 Нарушение атаки\n"
-                f"Игрок: {attack.attacker_name} {attack.attacker_tag}\n"
-                f"Война: {war_label}\n"
-                f"Время фиксации: {attack.observed_at:%Y-%m-%d %H:%M:%S UTC}\n"
-                f"Нарушение №{violation_number}\n"
-                f"Цель: {attack.defender_name} {attack.defender_tag}\n"
-                f"Позиция игрока: {attack.attacker_position}\n"
-                f"Позиция цели: {attack.defender_position}\n"
-                f"Причина: {violation.reason_text}"
-            )
-            await self.notifier.notify_once(
-                event_key=f"violation:{attack.id}",
-                event_type="violation",
-                text=text,
-                now=attack.observed_at,
-            )
+            await self._notify_attack_violation(war, attack)
             logger.info("Violation recorded for attack %s", attack.id)
             return
 
@@ -354,6 +338,33 @@ class WarSyncService:
         violation.target_position = attack.defender_position
         violation.detected_at = attack.observed_at
         await self.session.flush()
+
+    async def _notify_attack_violation(self, war: War, attack: Attack) -> None:
+        violation = await self.wars.get_violation_by_attack_id(attack.id)
+        if violation is None:
+            return
+        current_cycle = await self.period_service.current_cycle(attack.observed_at)
+        violation_number = await self.active_violation_counter.count_for_player(
+            attack.attacker_tag, current_cycle.start, current_cycle.end
+        )
+        war_label = "ЛВК" if war.war_type == WarType.CWL else "КВ"
+        text = (
+            f"🚨 Нарушение атаки\n"
+            f"Игрок: {attack.attacker_name} {attack.attacker_tag}\n"
+            f"Война: {war_label}\n"
+            f"Время фиксации: {attack.observed_at:%Y-%m-%d %H:%M:%S UTC}\n"
+            f"Нарушение №{violation_number}\n"
+            f"Цель: {attack.defender_name} {attack.defender_tag}\n"
+            f"Позиция игрока: {attack.attacker_position}\n"
+            f"Позиция цели: {attack.defender_position}\n"
+            f"Причина: {violation.reason_text}"
+        )
+        await self.notifier.notify_once(
+            event_key=f"violation:{attack.id}",
+            event_type="violation",
+            text=text,
+            now=attack.observed_at,
+        )
 
     def _war_uid(self, dto: WarDTO, own_tag: str, enemy_tag: str) -> str:
         base_time = dto.preparation_start_time or dto.start_time or dto.end_time or "unknown"
