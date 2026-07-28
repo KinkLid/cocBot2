@@ -111,10 +111,20 @@ async def violation_recalculation_confirm(callback: CallbackQuery, app_context: 
     except PermissionError:
         await callback.answer("Недостаточно прав", show_alert=True)
         return
-    try:
-        async with app_context.session_maker() as session:
+    async with app_context.session_maker() as session:
+        try:
             result = await ViolationRecalculationService(session).recalculate_current_cycle()
             await session.commit()
+        except Exception:
+            await session.rollback()
+            logger.exception("Failed to recalculate current-cycle violations")
+            await callback.message.answer(
+                "⚠️ Не удалось пересчитать нарушения. Изменения отменены."
+            )
+            await callback.answer()
+            return
+
+    try:
         await callback.message.edit_text(
             "✅ Перерасчёт завершён\n\n"
             f"Войн обработано: {result.wars_processed}\n"
@@ -125,8 +135,10 @@ async def violation_recalculation_confirm(callback: CallbackQuery, app_context: 
             f"Без изменений: {result.unchanged}"
         )
     except Exception:
-        logger.exception("Failed to recalculate current-cycle violations")
-        await callback.message.answer("⚠️ Не удалось пересчитать нарушения. Изменения отменены.")
+        logger.exception("Violations were committed, but result message could not be edited")
+        await callback.message.answer(
+            "✅ Перерасчёт завершён, изменения сохранены, но итоговое сообщение обновить не удалось."
+        )
     await callback.answer()
 
 

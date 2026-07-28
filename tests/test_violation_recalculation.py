@@ -115,3 +115,38 @@ async def test_recalculation_only_processes_regular_wars_in_current_cycle(sessio
     result = await ViolationRecalculationService(session).recalculate_current_cycle()
 
     assert (result.wars_processed, result.attacks_checked, result.created) == (1, 1, 1)
+
+
+@pytest.mark.asyncio
+async def test_recalculation_sorts_mixed_naive_and_aware_observed_at(session, monkeypatch):
+    session.add(CycleBoundary(source_key="cycle", boundary_at=START - timedelta(days=1), description="cycle"))
+    war = await _seed_war(session)
+    first = await _attack(session, war, 12, START + timedelta(minutes=2))
+    await _attack(session, war, 13, (START + timedelta(minutes=1)).replace(tzinfo=None))
+    await session.commit()
+    # SQLite reloads datetimes without timezone information; retain one aware value
+    # in the same ORM collection to reproduce mixed application/persisted values.
+    first.observed_at = START + timedelta(minutes=2)
+    monkeypatch.setattr("app.services.period.utcnow", lambda: START + timedelta(days=2))
+
+    result = await ViolationRecalculationService(session).recalculate_current_cycle()
+
+    assert result.attacks_checked == 2
+
+
+@pytest.mark.asyncio
+async def test_recalculation_uses_id_to_order_attacks_at_same_time(session, monkeypatch):
+    session.add(CycleBoundary(source_key="cycle", boundary_at=START - timedelta(days=1), description="cycle"))
+    war = await _seed_war(session)
+    seen = START + timedelta(hours=1)
+    for position in range(12, 17):
+        await _attack(session, war, position, seen - timedelta(minutes=1), attacker=position)
+    first = await _attack(session, war, 10, seen, attacker=13)
+    second = await _attack(session, war, 9, seen, attacker=13)
+    await session.commit()
+    monkeypatch.setattr("app.services.period.utcnow", lambda: START + timedelta(days=2))
+
+    await ViolationRecalculationService(session).recalculate_current_cycle()
+
+    assert first.id < second.id
+    assert await session.scalar(select(Violation).where(Violation.attack_id == second.id)) is None

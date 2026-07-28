@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Iterable, Protocol
 
 from app.models.enums import ViolationCode
+from app.utils.time import normalize_utc
 
 
 @dataclass(slots=True)
@@ -37,21 +38,23 @@ class AttackResult(Protocol):
 TWELVE_HOURS = timedelta(hours=12)
 
 
-def _normalize_utc(dt: datetime) -> datetime:
-    if dt.tzinfo is None or dt.utcoffset() is None:
-        return dt.replace(tzinfo=UTC)
-    return dt.astimezone(UTC)
-
-
 def best_previous_results_by_defender(
     current_attack_seen_at: datetime,
     allied_attacks: Iterable[AttackResult],
+    current_attack_id: int | None = None,
 ) -> dict[int, PreviousAttackResult]:
-    current_seen_at = _normalize_utc(current_attack_seen_at)
+    current_seen_at = normalize_utc(current_attack_seen_at)
     best_results: dict[int, PreviousAttackResult] = {}
 
     for attack in allied_attacks:
-        if _normalize_utc(attack.observed_at) >= current_seen_at:
+        attack_seen_at = normalize_utc(attack.observed_at)
+        attack_id = getattr(attack, "id", None)
+        is_previous = attack_seen_at < current_seen_at or (
+            current_attack_id is not None
+            and attack_id is not None
+            and (attack_seen_at, attack_id) < (current_seen_at, current_attack_id)
+        )
+        if not is_previous:
             continue
 
         result = PreviousAttackResult(
@@ -77,17 +80,20 @@ def resolve_allowed_targets_for_attack(
     allied_attacks: Iterable[AttackResult] = (),
     *,
     is_cwl: bool = False,
+    current_attack_id: int | None = None,
 ) -> AllowedTargets:
     if war_start_time is None or is_cwl:
         return AllowedTargets(allow_any=True)
 
-    normalized_war_start_time = _normalize_utc(war_start_time)
-    normalized_attack_seen_at = _normalize_utc(attack_seen_at)
+    normalized_war_start_time = normalize_utc(war_start_time)
+    normalized_attack_seen_at = normalize_utc(attack_seen_at)
     if normalized_attack_seen_at > normalized_war_start_time + TWELVE_HOURS:
         return AllowedTargets(allow_any=True)
 
     roster_positions = sorted(set(defender_positions))
-    best_results = best_previous_results_by_defender(attack_seen_at, allied_attacks)
+    best_results = best_previous_results_by_defender(
+        attack_seen_at, allied_attacks, current_attack_id
+    )
 
     def is_tripled(position: int) -> bool:
         result = best_results.get(position)
@@ -128,6 +134,7 @@ def evaluate_attack_violation(
     allied_attacks: Iterable[AttackResult] = (),
     *,
     is_cwl: bool = False,
+    current_attack_id: int | None = None,
 ) -> ViolationDecision:
     roster_positions = defender_positions
     if roster_positions is None:
@@ -143,6 +150,7 @@ def evaluate_attack_violation(
         defender_positions=roster_positions,
         allied_attacks=allied_attacks,
         is_cwl=is_cwl,
+        current_attack_id=current_attack_id,
     )
     if allowed_targets.allow_any or defender_position in allowed_targets.positions:
         return ViolationDecision(violated=False)
