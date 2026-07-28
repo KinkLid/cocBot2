@@ -3,9 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from app.domain.violation_rules import (
     best_previous_results_by_defender,
     evaluate_attack_violation,
+    evaluate_war_attack_violations,
     resolve_allowed_targets_for_attack,
 )
 from app.models.enums import ViolationCode
@@ -13,6 +16,17 @@ from app.models.enums import ViolationCode
 
 @dataclass(frozen=True)
 class AttackResult:
+    defender_position: int
+    stars: int
+    destruction: float
+    observed_at: datetime
+
+
+@dataclass(frozen=True)
+class WarAttackResult:
+    id: int
+    attacker_tag: str
+    attacker_position: int
     defender_position: int
     stars: int
     destruction: float
@@ -394,3 +408,55 @@ def test_base_window_open_target_prevents_fallback() -> None:
     assert allowed_targets.positions == frozenset({48, 49, 50})
     assert decision.violated is True
     assert decision.code == ViolationCode.ABOVE_SELF
+
+
+def _sequence(*targets: tuple[int, int], attacker=13, roster_size=30):
+    start = datetime(2026, 7, 19, 8, tzinfo=UTC)
+    attacks = [
+        WarAttackResult(index, f"#ALLY{target}", target, target, 3, 100, start)
+        for index, target in enumerate([11, 12, 13, 14, 15, 16], 1)
+    ]
+    attacks.extend(
+        WarAttackResult(100 + index, "#F", attacker, target, stars, 100,
+                        start + timedelta(hours=1))
+        for index, (target, stars) in enumerate(targets)
+    )
+    return evaluate_war_attack_violations(start, range(1, roster_size + 1), attacks)
+
+
+def test_feliks_reverse_order_is_retroactively_allowed() -> None:
+    decisions = _sequence((9, 3), (10, 3))
+    assert decisions[100].violated is False
+    assert decisions[101].violated is False
+
+
+def test_feliks_gap_that_is_not_tripled_keeps_far_attack_violation() -> None:
+    decisions = _sequence((9, 3), (10, 2))
+    assert decisions[100].code == ViolationCode.ABOVE_SELF
+    assert decisions[101].violated is False
+
+
+def test_three_target_chain_and_independent_sides() -> None:
+    complete = _sequence((8, 3), (10, 3), (9, 3), (17, 3))
+    assert all(not complete[attack_id].violated for attack_id in range(100, 104))
+
+    gap = _sequence((8, 3), (10, 3), (9, 2), (17, 3))
+    assert gap[100].code == ViolationCode.ABOVE_SELF
+    assert gap[103].violated is False
+
+
+def test_reverse_lower_chain_requires_continuous_triples() -> None:
+    complete = _sequence((18, 3), (17, 3))
+    assert not complete[100].violated and not complete[101].violated
+    gap = _sequence((18, 3), (17, 2))
+    assert gap[100].code == ViolationCode.TOO_LOW
+    assert not gap[101].violated
+
+
+@pytest.mark.parametrize("roster_size,attacker,targets", [
+    (15, 1, ((5, 3),)),
+    (30, 30, ((27, 3),)),
+])
+def test_sequence_uses_only_real_roster_edges(roster_size, attacker, targets) -> None:
+    decisions = _sequence(*targets, attacker=attacker, roster_size=roster_size)
+    assert set(decisions) and all(isinstance(item.violated, bool) for item in decisions.values())
