@@ -132,6 +132,7 @@ async def violation_recalculation_confirm(callback: CallbackQuery, app_context: 
             f"Нарушений создано: {result.created}\n"
             f"Нарушений обновлено: {result.updated}\n"
             f"Нарушений удалено: {result.deleted}\n"
+            f"Незавершённых решений: {result.pending}\n"
             f"Без изменений: {result.unchanged}"
         )
     except Exception:

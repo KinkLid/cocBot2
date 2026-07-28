@@ -6,10 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.violation_rules import evaluate_war_attack_violations
 from app.models import Violation
-from app.models.enums import ViolationCode, WarType
+from app.models.enums import ViolationCode, WarState, WarType
 from app.repositories.war import WarRepository
 from app.services.period import PeriodService
-from app.utils.time import normalize_utc
+from app.utils.time import normalize_utc, utcnow
 
 
 POSITIONAL_CODES = {ViolationCode.ABOVE_SELF, ViolationCode.TOO_LOW}
@@ -28,6 +28,7 @@ class ViolationRecalculationResult:
     deleted: int = 0
     unchanged: int = 0
     created_attack_ids: tuple[int, ...] = ()
+    pending: int = 0
 
 
 class ViolationRecalculationService:
@@ -41,7 +42,7 @@ class ViolationRecalculationService:
     async def recalculate_current_cycle(self) -> ViolationRecalculationResult:
         period = await self.periods.current_cycle()
         wars = await self.wars.list_regular_wars_in_period(period.start, period.end)
-        created = updated = deleted = unchanged = attacks_checked = 0
+        created = updated = deleted = unchanged = attacks_checked = pending = 0
         created_attack_ids: list[int] = []
 
         for war in wars:
@@ -67,6 +68,7 @@ class ViolationRecalculationService:
             updated += result.updated
             deleted += result.deleted
             unchanged += result.unchanged
+            pending += result.pending
             created_attack_ids.extend(result.created_attack_ids)
 
         await self.session.flush()
@@ -74,6 +76,7 @@ class ViolationRecalculationService:
             wars_processed=len(wars), attacks_checked=attacks_checked,
             created=created, updated=updated, deleted=deleted, unchanged=unchanged,
             created_attack_ids=tuple(created_attack_ids),
+            pending=pending,
         )
 
     async def reconcile_war(
@@ -87,8 +90,11 @@ class ViolationRecalculationService:
         decisions = evaluate_war_attack_violations(
             war.start_time, defender_positions, attacks,
             is_cwl=war.war_type == WarType.CWL,
+            attacks_per_member=_attacks_per_member(war.source_payload),
+            war_ended=war.state == WarState.WAR_ENDED,
+            evaluated_at=utcnow(),
         )
-        created = updated = deleted = unchanged = attacks_checked = 0
+        created = updated = deleted = unchanged = attacks_checked = pending = 0
         created_attack_ids: list[int] = []
         for attack in sorted(
             attacks, key=lambda item: (normalize_utc(item.observed_at), item.id)
@@ -102,7 +108,10 @@ class ViolationRecalculationService:
 
             if protected:
                 unchanged += 1
-            elif not decision.violated or decision.code is None or decision.reason_text is None:
+            elif (not decision.violated or not decision.is_final
+                  or decision.code is None or decision.reason_text is None):
+                if decision.violated and not decision.is_final:
+                    pending += 1
                 if violation is None:
                     unchanged += 1
                 else:
@@ -148,4 +157,10 @@ class ViolationRecalculationService:
             deleted=deleted,
             unchanged=unchanged,
             created_attack_ids=tuple(created_attack_ids),
+            pending=pending,
         )
+
+
+def _attacks_per_member(source_payload: dict | None) -> int | None:
+    value = (source_payload or {}).get("attacksPerMember")
+    return value if isinstance(value, int) and value > 0 else None

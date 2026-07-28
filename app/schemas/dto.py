@@ -57,6 +57,7 @@ class WarDTO(BaseModel):
     clan: WarClanSideDTO
     opponent: WarClanSideDTO
     team_size: int = Field(alias="teamSize")
+    attacks_per_member: int | None = Field(default=None, alias="attacksPerMember")
     preparation_start_time: str | None = Field(default=None, alias="preparationStartTime")
     start_time: str | None = Field(default=None, alias="startTime")
     end_time: str | None = Field(default=None, alias="endTime")
