@@ -36,14 +36,23 @@ class AttackResult(Protocol):
     defender_position: int
     stars: int
     destruction: float
+    attack_order: int
     observed_at: datetime
 
 
 TWELVE_HOURS = timedelta(hours=12)
 
 
-def attack_order_key(attack: AttackResult) -> tuple[datetime, int]:
-    """Return the single stable ordering used by every reconciliation path."""
+def attack_order_key(attack: AttackResult) -> tuple:
+    """Return the API chronology, with a compatibility fallback for old callers.
+
+    Clash's ``order`` is the global ordinal of an attack in a war.  Unlike
+    ``observed_at`` it is not affected by member iteration order when several
+    attacks are discovered by one poll.
+    """
+    order = getattr(attack, "attack_order", None)
+    if isinstance(order, int):
+        return order, attack.id
     return normalize_utc(attack.observed_at), attack.id
 
 

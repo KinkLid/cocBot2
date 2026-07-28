@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.violation_rules import evaluate_war_attack_violations
+from app.domain.violation_rules import attack_order_key, evaluate_war_attack_violations
 from app.models import Violation
 from app.models.enums import ViolationCode, WarState, WarType
 from app.repositories.war import WarRepository
 from app.services.period import PeriodService
-from app.utils.time import normalize_utc, utcnow
+from app.utils.time import utcnow
 
 
 POSITIONAL_CODES = {ViolationCode.ABOVE_SELF, ViolationCode.TOO_LOW}
@@ -94,13 +95,20 @@ class ViolationRecalculationService:
             war_ended=war.state == WarState.WAR_ENDED,
             evaluated_at=utcnow(),
         )
+        attack_ids = [attack.id for attack in attacks]
+        violations_by_attack_id = {
+            violation.attack_id: violation
+            for violation in (
+                await self.session.scalars(
+                    select(Violation).where(Violation.attack_id.in_(attack_ids))
+                )
+            ).all()
+        } if attack_ids else {}
         created = updated = deleted = unchanged = attacks_checked = pending = 0
         created_attack_ids: list[int] = []
-        for attack in sorted(
-            attacks, key=lambda item: (normalize_utc(item.observed_at), item.id)
-        ):
+        for attack in sorted(attacks, key=attack_order_key):
             attacks_checked += 1
-            violation = attack.violation
+            violation = violations_by_attack_id.get(attack.id)
             protected = violation is not None and (
                 violation.is_manual or violation.code not in POSITIONAL_CODES
             )
@@ -116,21 +124,22 @@ class ViolationRecalculationService:
                     unchanged += 1
                 else:
                     await self.session.delete(violation)
+                    violations_by_attack_id.pop(attack.id, None)
                     deleted += 1
             elif violation is None:
-                self.session.add(
-                    Violation(
-                        attack_id=attack.id,
-                        war_id=war.id,
-                        player_tag=attack.attacker_tag,
-                        code=decision.code,
-                        reason_text=decision.reason_text,
-                        player_position=attack.attacker_position,
-                        target_position=attack.defender_position,
-                        detected_at=attack.observed_at,
-                        is_manual=False,
-                    )
+                violation = Violation(
+                    attack_id=attack.id,
+                    war_id=war.id,
+                    player_tag=attack.attacker_tag,
+                    code=decision.code,
+                    reason_text=decision.reason_text,
+                    player_position=attack.attacker_position,
+                    target_position=attack.defender_position,
+                    detected_at=attack.observed_at,
+                    is_manual=False,
                 )
+                self.session.add(violation)
+                violations_by_attack_id[attack.id] = violation
                 created += 1
                 created_attack_ids.append(attack.id)
             elif (

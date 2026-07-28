@@ -71,6 +71,7 @@ def make_regular_war(
     payload = {
         "state": "inWar",
         "teamSize": team_size,
+        "attacksPerMember": 2,
         "preparationStartTime": coc_time(start - timedelta(hours=23)),
         "startTime": coc_time(start),
         "endTime": coc_time(start + timedelta(hours=24)),
