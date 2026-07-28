@@ -31,6 +31,39 @@ class WarAttackResult:
     stars: int
     destruction: float
     observed_at: datetime
+    attack_order: int | None = None
+
+
+def test_war_order_wins_when_api_member_iteration_is_reversed() -> None:
+    start = datetime(2026, 7, 1, tzinfo=UTC)
+    base = [
+        WarAttackResult(order, f"#ALLY{target}", target, target, 3, 100, start, order)
+        for order, target in enumerate(range(11, 17), 1)
+    ]
+    closed_ten = WarAttackResult(7, "#ALLY", 10, 10, 3, 100, start, 7)
+    hit_nine = WarAttackResult(8, "#FELIKS", 13, 9, 3, 100, start, 8)
+
+    decisions = evaluate_war_attack_violations(
+        start, range(1, 31), [hit_nine, closed_ten, *base], attacks_per_member=2
+    )
+
+    assert decisions[hit_nine.id].violated is False
+
+
+def test_later_ally_attack_does_not_retroactively_allow_earlier_hit() -> None:
+    start = datetime(2026, 7, 1, tzinfo=UTC)
+    base = [
+        WarAttackResult(order, f"#ALLY{target}", target, target, 3, 100, start, order)
+        for order, target in enumerate(range(11, 17), 1)
+    ]
+    hit_nine = WarAttackResult(7, "#FELIKS", 13, 9, 3, 100, start, 7)
+    late_ten = WarAttackResult(8, "#ALLY", 10, 10, 3, 100, start, 8)
+
+    decisions = evaluate_war_attack_violations(
+        start, range(1, 31), [late_ten, hit_nine, *base], attacks_per_member=1
+    )
+
+    assert decisions[hit_nine.id].violated is True
 
 
 def make_results(

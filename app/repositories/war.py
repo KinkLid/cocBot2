@@ -69,7 +69,7 @@ class WarRepository:
             select(Attack)
             .options(selectinload(Attack.violation))
             .where(Attack.war_id == war_id)
-            .order_by(Attack.observed_at.asc(), Attack.id.asc())
+            .order_by(Attack.attack_order.asc(), Attack.id.asc())
         )
         return list(result.all())
 

@@ -34,12 +34,12 @@ async def _seed_war(session, *, start=START, uid="war", cwl=False):
     return war
 
 
-async def _attack(session, war, position, seen, *, stars=3, attacker=13):
+async def _attack(session, war, position, seen, *, stars=3, attacker=13, order=None):
     attack = Attack(
         war_id=war.id, attacker_tag="#F", attacker_name="FELIKS", attacker_position=attacker,
         attacker_town_hall=16, defender_tag=f"#E{position}", defender_name=f"E{position}",
         defender_position=position, defender_town_hall=16, stars=stars, destruction=100,
-        attack_order=position, observed_at=seen,
+        attack_order=position if order is None else order, observed_at=seen,
     )
     session.add(attack)
     await session.flush()
@@ -177,3 +177,32 @@ async def test_incomplete_roster_fails_before_existing_violation_is_deleted(sess
     await session.rollback()
 
     assert await session.get(Violation, existing.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_twice_in_same_session_reuses_created_row(session, monkeypatch):
+    war = await _seed_war(session)
+    attack = await _attack(session, war, 1, START + timedelta(minutes=1), order=1)
+    monkeypatch.setattr("app.services.violation_recalculation.utcnow", lambda: START + timedelta(days=2))
+    service = ViolationRecalculationService(session)
+
+    first = await service.reconcile_war(war, [attack], defender_positions=list(range(1, 31)))
+    second = await service.reconcile_war(war, [attack], defender_positions=list(range(1, 31)))
+
+    assert (first.created, second.created, second.unchanged) == (1, 0, 1)
+    assert len((await session.scalars(select(Violation))).all()) == 1
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_removes_created_row_in_same_session(session, monkeypatch):
+    war = await _seed_war(session)
+    attack = await _attack(session, war, 1, START + timedelta(minutes=1), order=1)
+    monkeypatch.setattr("app.services.violation_recalculation.utcnow", lambda: START + timedelta(days=2))
+    service = ViolationRecalculationService(session)
+    first = await service.reconcile_war(war, [attack], defender_positions=list(range(1, 31)))
+    attack.defender_position = 13
+
+    second = await service.reconcile_war(war, [attack], defender_positions=list(range(1, 31)))
+
+    assert (first.created, second.deleted) == (1, 1)
+    assert await session.scalar(select(Violation).where(Violation.attack_id == attack.id)) is None

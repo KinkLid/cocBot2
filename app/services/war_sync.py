@@ -97,7 +97,7 @@ class WarSyncService:
                 start_time=parse_coc_time(dto.start_time),
                 end_time=parse_coc_time(dto.end_time),
                 preparation_start_time=parse_coc_time(dto.preparation_start_time),
-                source_payload=dto.raw_payload or {},
+                source_payload=self._source_payload(dto),
             )
         )
 
@@ -209,6 +209,14 @@ class WarSyncService:
             for attack_id in result.created_attack_ids:
                 await self._notify_attack_violation(war, attacks_by_id[attack_id])
         return war
+
+    @staticmethod
+    def _source_payload(dto: WarDTO) -> dict:
+        """Persist one canonical snapshot while honoring the typed DTO field."""
+        payload = dict(dto.raw_payload or {})
+        if dto.attacks_per_member is not None:
+            payload["attacksPerMember"] = dto.attacks_per_member
+        return payload
 
 
     async def _reconcile_cwl_missed_attack_violations(
