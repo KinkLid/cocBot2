@@ -190,6 +190,7 @@ async def test_incomplete_roster_fails_before_existing_violation_is_deleted(sess
     war = await _seed_war(session)
     attack = await _attack(session, war, 13, START + timedelta(minutes=1), order=1)
     existing = await _violation(session, war, attack)
+    existing_id = existing.id
     participant = await session.scalar(
         select(WarParticipant).where(
             WarParticipant.war_id == war.id,
@@ -204,7 +205,7 @@ async def test_incomplete_roster_fails_before_existing_violation_is_deleted(sess
         await ViolationRecalculationService(session).recalculate_current_cycle()
     await session.rollback()
 
-    assert await session.get(Violation, existing.id) is not None
+    assert await session.get(Violation, existing_id) is not None
 
 
 @pytest.mark.asyncio

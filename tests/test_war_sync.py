@@ -44,7 +44,7 @@ def _feliks_war(start: datetime, *, second_stars: int | None = None,
         }
         for position in range(11, 17)
     ] + [{
-        "tag": "#F", "name": "FELIKS", "mapPosition": 12,
+        "tag": "#F", "name": "FELIKS", "mapPosition": 13,
         "townhallLevel": 16, "attacks": feliks_attacks,
     }]
     if shuffled_members:
