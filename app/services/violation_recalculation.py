@@ -10,7 +10,7 @@ from app.models import Violation
 from app.models.enums import ViolationCode, WarState, WarType
 from app.repositories.war import WarRepository
 from app.services.period import PeriodService
-from app.utils.time import utcnow
+from app.utils.time import normalize_utc, utcnow
 
 
 POSITIONAL_CODES = {ViolationCode.ABOVE_SELF, ViolationCode.TOO_LOW}
@@ -147,7 +147,7 @@ class ViolationRecalculationService:
                 or violation.reason_text != decision.reason_text
                 or violation.player_position != attack.attacker_position
                 or violation.target_position != attack.defender_position
-                or violation.detected_at != attack.observed_at
+                or normalize_utc(violation.detected_at) != normalize_utc(attack.observed_at)
             ):
                 violation.code = decision.code
                 violation.reason_text = decision.reason_text
