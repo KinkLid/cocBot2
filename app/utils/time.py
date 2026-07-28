@@ -14,3 +14,10 @@ def parse_coc_time(value: str | None) -> datetime | None:
 
 def utcnow() -> datetime:
     return datetime.now(tz=UTC)
+
+
+def normalize_utc(value: datetime) -> datetime:
+    """Return an aware UTC datetime, treating persisted naive values as UTC."""
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)

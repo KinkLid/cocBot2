@@ -9,6 +9,7 @@ from app.models import Violation
 from app.models.enums import ViolationCode
 from app.repositories.war import WarRepository
 from app.services.period import PeriodService
+from app.utils.time import normalize_utc
 
 
 POSITIONAL_CODES = {ViolationCode.ABOVE_SELF, ViolationCode.TOO_LOW}
@@ -43,7 +44,9 @@ class ViolationRecalculationService:
                 for participant in war.participants
                 if not participant.is_own_clan
             )
-            attacks = sorted(war.attacks, key=lambda attack: (attack.observed_at, attack.id))
+            attacks = sorted(
+                war.attacks, key=lambda attack: (normalize_utc(attack.observed_at), attack.id)
+            )
             previous_attacks = []
             for attack in attacks:
                 attacks_checked += 1
@@ -58,6 +61,7 @@ class ViolationRecalculationService:
                     defender_position=attack.defender_position,
                     defender_positions=defender_positions,
                     allied_attacks=previous_attacks,
+                    current_attack_id=attack.id,
                 )
 
                 if protected:
