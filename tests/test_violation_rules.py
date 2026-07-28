@@ -523,6 +523,65 @@ def test_ally_closing_last_base_target_between_attacks_opens_boundary() -> None:
     assert not decisions[102].violated
 
 
+def test_ally_moves_external_boundary_between_player_attacks() -> None:
+    start = datetime(2026, 7, 19, 8, tzinfo=UTC)
+    attacks = [
+        WarAttackResult(i, f"#A{target}", target, target, 3, 100, start)
+        for i, target in enumerate(range(11, 17), 1)
+    ]
+    attacks.extend([
+        WarAttackResult(100, "#F", 13, 10, 2, 80, start + timedelta(hours=1)),
+        WarAttackResult(101, "#ALLY", 20, 10, 3, 100,
+                        start + timedelta(hours=1, seconds=1)),
+        WarAttackResult(102, "#F", 13, 9, 2, 80,
+                        start + timedelta(hours=1, seconds=2)),
+    ])
+
+    decisions = evaluate_war_attack_violations(start, range(1, 31), attacks)
+
+    assert not decisions[100].violated
+    assert not decisions[102].violated
+
+
+def test_late_ally_triple_does_not_retroactively_move_boundary() -> None:
+    start = datetime(2026, 7, 19, 8, tzinfo=UTC)
+    attacks = [
+        WarAttackResult(i, f"#A{target}", target, target, 3, 100, start)
+        for i, target in enumerate(range(11, 17), 1)
+    ]
+    attacks.extend([
+        WarAttackResult(100, "#F", 13, 9, 3, 100, start + timedelta(hours=1)),
+        WarAttackResult(101, "#ALLY", 20, 10, 3, 100,
+                        start + timedelta(hours=1, seconds=1)),
+    ])
+
+    decision = evaluate_war_attack_violations(
+        start, range(1, 31), attacks, attacks_per_member=1
+    )[100]
+
+    assert decision.code == ViolationCode.ABOVE_SELF
+    assert decision.is_final is True
+
+
+def test_fixable_external_jump_is_pending_until_sequence_finishes() -> None:
+    start = datetime(2026, 7, 19, 8, tzinfo=UTC)
+    attacks = [
+        WarAttackResult(i, f"#A{target}", target, target, 3, 100, start)
+        for i, target in enumerate(range(11, 17), 1)
+    ]
+    attacks.append(
+        WarAttackResult(100, "#F", 13, 9, 3, 100, start + timedelta(hours=1))
+    )
+
+    decision = evaluate_war_attack_violations(
+        start, range(1, 31), attacks, attacks_per_member=2,
+        evaluated_at=start + timedelta(hours=2),
+    )[100]
+
+    assert decision.code == ViolationCode.ABOVE_SELF
+    assert decision.is_final is False
+
+
 @pytest.mark.parametrize("roster_size,attacker,targets", [
     (15, 1, ((5, 3),)),
     (30, 30, ((27, 3),)),

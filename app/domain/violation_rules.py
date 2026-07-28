@@ -13,6 +13,7 @@ class ViolationDecision:
     violated: bool
     code: ViolationCode | None = None
     reason_text: str | None = None
+    is_final: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +53,9 @@ def evaluate_war_attack_violations(
     attacks: Iterable[AttackResult],
     *,
     is_cwl: bool = False,
+    attacks_per_member: int | None = None,
+    war_ended: bool = False,
+    evaluated_at: datetime | None = None,
 ) -> dict[int, ViolationDecision]:
     """Calculate final positional decisions, including retrospective chains.
 
@@ -110,37 +114,54 @@ def evaluate_war_attack_violations(
         if not external_attacks:
             continue
 
-        baseline_tripled = set(triples_before[external_attacks[0].id])
         above = [target for target in reversed(roster) if target < position - 1]
         below = [target for target in roster if target > position + 3]
-
-        allowed_external: set[int] = set()
-        for chain in (above, below):
-            required = [target for target in chain if target not in baseline_tripled]
-            if not required:
-                continue
-            player_triples = {
-                attack.defender_position
-                for attack in external_attacks
-                if attack.stars == 3
-            }
-            # The nearest still-open target is legal even when it is not
-            # tripled. More distant targets become legal only through the
-            # final, continuously tripled prefix.
-            for target in required:
-                allowed_external.add(target)
-                if target not in player_triples:
-                    break
+        player_triples = {
+            attack.defender_position
+            for attack in external_attacks
+            if attack.stars == 3
+        }
 
         for attack in external_attacks:
-            if attack.defender_position in baseline_tripled:
+            tripled_at_attack = set(triples_before[attack.id])
+            allowed_external: set[int] = set()
+            for chain in (above, below):
+                # Ally triples are historical facts only when they preceded
+                # this attack.  This player's triples may bridge a chain
+                # retrospectively, irrespective of their order.
+                for target in chain:
+                    if target in tripled_at_attack:
+                        continue
+                    allowed_external.add(target)
+                    if target not in player_triples:
+                        break
+
+            if attack.defender_position in tripled_at_attack:
                 decisions[attack.id] = ViolationDecision(False)
             else:
-                decisions[attack.id] = _decision_for_positions(
+                decision = _decision_for_positions(
                     attack.attacker_position,
                     attack.defender_position,
                     frozenset(allowed_external),
                 )
+                if decision.violated:
+                    later_attack_exists = any(
+                        attack_order_key(candidate) > attack_order_key(attack)
+                        for candidate in player_attacks
+                    )
+                    all_attacks_used = (
+                        attacks_per_member is not None
+                        and len(player_attacks) >= attacks_per_member
+                    )
+                    window_finished = (
+                        evaluated_at is not None
+                        and normalize_utc(evaluated_at) >= start + TWELVE_HOURS
+                    )
+                    decision.is_final = (
+                        later_attack_exists or all_attacks_used
+                        or window_finished or war_ended
+                    )
+                decisions[attack.id] = decision
 
     return decisions
 
