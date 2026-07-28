@@ -72,6 +72,23 @@ class WarRepository:
         )
         return list(result.all())
 
+    async def list_regular_wars_in_period(self, period_start, period_end) -> list[War]:
+        result = await self.session.scalars(
+            select(War)
+            .options(
+                selectinload(War.participants),
+                selectinload(War.attacks).selectinload(Attack.violation),
+            )
+            .where(
+                War.war_type == WarType.REGULAR,
+                War.is_friendly.is_(False),
+                War.start_time >= period_start,
+                War.start_time <= period_end,
+            )
+            .order_by(War.start_time.asc(), War.id.asc())
+        )
+        return list(result.all())
+
     async def get_attack_by_id(self, attack_id: int) -> Attack | None:
         result = await self.session.execute(select(Attack).where(Attack.id == attack_id))
         return result.scalar_one_or_none()
