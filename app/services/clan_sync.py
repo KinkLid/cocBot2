@@ -13,7 +13,7 @@ from app.repositories.player_account import PlayerAccountRepository
 from app.services.notifications import AdminNotifier
 from app.services.donations import DonationService
 from app.services.period import PeriodService
-from app.utils.time import utcnow
+from app.utils.time import normalize_utc, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +203,7 @@ class ClanSyncService:
         for player in absent_players:
             if player.last_seen_in_clan_at is None:
                 continue
-            if player.last_seen_in_clan_at > previous_cycle.start:
+            if normalize_utc(player.last_seen_in_clan_at) > normalize_utc(previous_cycle.start):
                 continue
             archive_exists = await self.session.scalar(
                 select(DepartedPlayerArchive).where(DepartedPlayerArchive.player_tag == player.player_tag)
