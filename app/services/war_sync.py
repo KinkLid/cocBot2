@@ -14,6 +14,7 @@ from app.schemas.dto import CWLGroupDTO, WarDTO
 from app.services.active_violation_counter import ActiveViolationCounterService
 from app.services.notifications import AdminNotifier
 from app.services.period import PeriodService
+from app.services.violation_recalculation import ViolationRecalculationService
 from app.utils.time import parse_coc_time, utcnow
 
 logger = logging.getLogger(__name__)
@@ -191,6 +192,17 @@ class WarSyncService:
             war,
             own_side.members,
         )
+        if not war.is_friendly and war.war_type == WarType.REGULAR:
+            # A later attack can legalize an earlier attack by completing a
+            # directional chain, so finish every sync with one war-wide pass.
+            saved_attacks = await self.wars.list_attacks_for_war(war.id)
+            await ViolationRecalculationService(self.session).reconcile_war(
+                war,
+                saved_attacks,
+                defender_positions=self._defender_positions_from_members(
+                    enemy_side.members
+                ),
+            )
         return war
 
 

@@ -67,6 +67,7 @@ class WarRepository:
     async def list_attacks_for_war(self, war_id: int) -> list[Attack]:
         result = await self.session.scalars(
             select(Attack)
+            .options(selectinload(Attack.violation))
             .where(Attack.war_id == war_id)
             .order_by(Attack.observed_at.asc(), Attack.id.asc())
         )

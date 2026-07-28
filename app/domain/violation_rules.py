@@ -29,6 +29,9 @@ class AllowedTargets:
 
 
 class AttackResult(Protocol):
+    id: int
+    attacker_tag: str
+    attacker_position: int
     defender_position: int
     stars: int
     destruction: float
@@ -36,6 +39,124 @@ class AttackResult(Protocol):
 
 
 TWELVE_HOURS = timedelta(hours=12)
+
+
+def attack_order_key(attack: AttackResult) -> tuple[datetime, int]:
+    """Return the single stable ordering used by every reconciliation path."""
+    return normalize_utc(attack.observed_at), attack.id
+
+
+def evaluate_war_attack_violations(
+    war_start_time: datetime | None,
+    defender_positions: Iterable[int],
+    attacks: Iterable[AttackResult],
+    *,
+    is_cwl: bool = False,
+) -> dict[int, ViolationDecision]:
+    """Calculate final positional decisions, including retrospective chains.
+
+    The calculation is deliberately pure.  Persistence and notifications are
+    handled by callers, so live sync and historical recalculation cannot drift.
+    """
+    ordered = sorted(attacks, key=attack_order_key)
+    roster = sorted(set(defender_positions))
+    decisions: dict[int, ViolationDecision] = {}
+
+    if war_start_time is None or is_cwl:
+        return {attack.id: ViolationDecision(False) for attack in ordered}
+
+    start = normalize_utc(war_start_time)
+    in_window = [
+        attack
+        for attack in ordered
+        if normalize_utc(attack.observed_at) <= start + TWELVE_HOURS
+    ]
+    in_window_ids = {attack.id for attack in in_window}
+    for attack in ordered:
+        if attack.id not in in_window_ids:
+            decisions[attack.id] = ViolationDecision(False)
+
+    by_player: dict[str, list[AttackResult]] = {}
+    for attack in in_window:
+        by_player.setdefault(attack.attacker_tag, []).append(attack)
+
+    for player_attacks in by_player.values():
+        position = player_attacks[0].attacker_position
+        baseline = best_previous_results_by_defender(
+            player_attacks[0].observed_at,
+            ordered,
+            player_attacks[0].id,
+        )
+        base = [target for target in roster if position - 1 <= target <= position + 3]
+        base_closed = bool(base) and all(
+            baseline.get(target) is not None and baseline[target].stars == 3
+            for target in base
+        )
+
+        if not base_closed:
+            allowed = frozenset(base)
+            for attack in player_attacks:
+                decisions[attack.id] = _decision_for_positions(
+                    attack.attacker_position, attack.defender_position, allowed
+                )
+            continue
+
+        baseline_tripled = {
+            target for target, result in baseline.items() if result.stars == 3
+        }
+        above = [target for target in reversed(roster) if target < position - 1]
+        below = [target for target in roster if target > position + 3]
+
+        allowed_external: set[int] = set()
+        for chain in (above, below):
+            required = [target for target in chain if target not in baseline_tripled]
+            if not required:
+                continue
+            player_triples = {
+                attack.defender_position
+                for attack in player_attacks
+                if attack.stars == 3
+            }
+            # The nearest still-open target is legal even when it is not
+            # tripled. More distant targets become legal only through the
+            # final, continuously tripled prefix.
+            allowed_external.add(required[0])
+            for target in required:
+                if target not in player_triples:
+                    break
+                allowed_external.add(target)
+
+        for attack in player_attacks:
+            if attack.defender_position in base or attack.defender_position in baseline_tripled:
+                decisions[attack.id] = ViolationDecision(False)
+            else:
+                decisions[attack.id] = _decision_for_positions(
+                    attack.attacker_position,
+                    attack.defender_position,
+                    frozenset(allowed_external),
+                )
+
+    return decisions
+
+
+def _decision_for_positions(
+    attacker_position: int,
+    defender_position: int,
+    allowed: frozenset[int],
+) -> ViolationDecision:
+    if defender_position in allowed:
+        return ViolationDecision(False)
+    code = (
+        ViolationCode.ABOVE_SELF
+        if defender_position < attacker_position
+        else ViolationCode.TOO_LOW
+    )
+    direction = "выше" if code == ViolationCode.ABOVE_SELF else "ниже"
+    return ViolationDecision(
+        True,
+        code,
+        f"Атака по сопернику {direction} разрешенной позиции в первые 12 часов",
+    )
 
 
 def best_previous_results_by_defender(

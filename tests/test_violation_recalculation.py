@@ -7,7 +7,10 @@ from sqlalchemy import select
 
 from app.models import Attack, CycleBoundary, Violation, War, WarParticipant
 from app.models.enums import ViolationCode, WarState, WarType
-from app.services.violation_recalculation import ViolationRecalculationService
+from app.services.violation_recalculation import (
+    IncompleteWarRosterError,
+    ViolationRecalculationService,
+)
 
 
 START = datetime(2026, 7, 19, 8, tzinfo=UTC)
@@ -58,7 +61,7 @@ async def test_recalculation_feliks_removes_only_wrong_automatic_violation(sessi
     session.add(CycleBoundary(source_key="cycle", boundary_at=START - timedelta(days=1), description="cycle"))
     war = await _seed_war(session)
     before = START + timedelta(hours=1)
-    for position in range(12, 17):
+    for position in range(11, 17):
         await _attack(session, war, position, before, attacker=position)
     nine = await _attack(session, war, 9, before + timedelta(minutes=1))
     ten = await _attack(session, war, 10, before + timedelta(minutes=2))
@@ -71,8 +74,9 @@ async def test_recalculation_feliks_removes_only_wrong_automatic_violation(sessi
     await session.commit()
     rows = list((await session.scalars(select(Violation).order_by(Violation.id))).all())
 
-    assert [(row.attack_id, row.code) for row in rows] == [(v9.attack_id, ViolationCode.ABOVE_SELF)]
-    assert (result.deleted, result.created) == (1, 0)
+    assert rows == []
+    assert v9.attack_id == nine.id
+    assert (result.deleted, result.created) == (2, 0)
 
 
 @pytest.mark.asyncio
@@ -150,3 +154,26 @@ async def test_recalculation_uses_id_to_order_attacks_at_same_time(session, monk
 
     assert first.id < second.id
     assert await session.scalar(select(Violation).where(Violation.attack_id == second.id)) is None
+
+
+@pytest.mark.asyncio
+async def test_incomplete_roster_fails_before_existing_violation_is_deleted(session, monkeypatch):
+    session.add(CycleBoundary(source_key="cycle", boundary_at=START - timedelta(days=1), description="cycle"))
+    war = await _seed_war(session)
+    attack = await _attack(session, war, 13, START + timedelta(minutes=1))
+    existing = await _violation(session, war, attack)
+    participant = await session.scalar(
+        select(WarParticipant).where(
+            WarParticipant.war_id == war.id,
+            WarParticipant.map_position == 30,
+        )
+    )
+    await session.delete(participant)
+    await session.commit()
+    monkeypatch.setattr("app.services.period.utcnow", lambda: START + timedelta(days=2))
+
+    with pytest.raises(IncompleteWarRosterError, match="Неполный состав"):
+        await ViolationRecalculationService(session).recalculate_current_cycle()
+    await session.rollback()
+
+    assert await session.get(Violation, existing.id) is not None
