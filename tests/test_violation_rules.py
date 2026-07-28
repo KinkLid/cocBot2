@@ -132,14 +132,12 @@ def test_outside_base_window_is_violation_while_base_target_is_not_tripled() -> 
     assert decision.code == ViolationCode.TOO_LOW
 
 
-def test_nearest_below_is_only_fallback_when_base_window_is_tripled() -> None:
+def test_nearest_open_target_is_fallback_when_base_window_is_tripled() -> None:
     start = datetime(2026, 4, 1, 10, 0, tzinfo=UTC)
     seen_at = start + timedelta(hours=2)
     attacks = make_results(range(9, 14), start + timedelta(hours=1))
 
-    allowed = evaluate_attack_violation(
-        start, seen_at, 10, 14, range(1, 21), attacks
-    )
+    allowed = evaluate_attack_violation(start, seen_at, 10, 8, range(1, 21), attacks)
     skipped = evaluate_attack_violation(
         start, seen_at, 10, 15, range(1, 21), attacks
     )
@@ -196,11 +194,61 @@ def test_future_attacks_do_not_open_fallback_but_previous_attacks_do() -> None:
         start, seen_at, 10, 14, range(1, 21), future_triples
     )
     after_previous_attacks = evaluate_attack_violation(
-        start, seen_at, 10, 14, range(1, 21), previous_triples
+        start, seen_at, 10, 8, range(1, 21), previous_triples
     )
 
     assert before_future_attacks.violated is True
     assert after_previous_attacks.violated is False
+
+
+def test_feliks_fallback_uses_distance_and_only_previous_attacks() -> None:
+    start = datetime(2026, 7, 19, 8, 0, tzinfo=UTC)
+    first_seen = datetime(2026, 7, 19, 9, 56, tzinfo=UTC)
+    base_triples = make_results(
+        [position for position in range(1, 31) if position not in {9, 10}],
+        first_seen - timedelta(minutes=1),
+    )
+
+    attack_nine = evaluate_attack_violation(
+        start, first_seen, 13, 9, range(1, 31), base_triples
+    )
+    nine_tripled = AttackResult(9, 3, 100, first_seen)
+    attack_ten = evaluate_attack_violation(
+        start,
+        first_seen + timedelta(minutes=3),
+        13,
+        10,
+        range(1, 31),
+        [*base_triples, nine_tripled],
+    )
+
+    assert attack_nine.violated is True
+    assert attack_nine.code == ViolationCode.ABOVE_SELF
+    assert attack_ten.violated is False
+
+
+def test_equally_near_open_targets_on_both_sides_are_allowed() -> None:
+    start = datetime(2026, 4, 1, 10, tzinfo=UTC)
+    seen = start + timedelta(hours=1)
+    triples = make_results(
+        [position for position in range(1, 21) if position not in {6, 14}],
+        seen - timedelta(minutes=1),
+    )
+
+    targets = resolve_allowed_targets_for_attack(start, seen, 10, range(1, 21), triples)
+
+    assert targets.positions == frozenset({6, 14})
+
+
+def test_one_or_two_star_target_in_base_window_prevents_fallback() -> None:
+    start = datetime(2026, 4, 1, 10, tzinfo=UTC)
+    seen = start + timedelta(hours=1)
+    attacks = make_results([9, 10, 12, 13], seen - timedelta(minutes=2))
+    attacks.append(AttackResult(11, 2, 99, seen - timedelta(minutes=1)))
+
+    decision = evaluate_attack_violation(start, seen, 10, 8, range(1, 21), attacks)
+
+    assert decision.violated is True
 
 
 def test_best_previous_result_uses_stars_then_destruction() -> None:

@@ -16,6 +16,7 @@ from app.bot.keyboards.common import (
     manual_contribution_cancel_keyboard,
     manual_contribution_confirm_keyboard,
     manual_contribution_players_keyboard,
+    violation_recalculation_confirm_keyboard,
 )
 from app.bot.keyboards.main import back_keyboard, main_menu, violation_reset_amount_keyboard
 from app.bot.utils.telegram_text import edit_or_send_long_message, send_long_message
@@ -46,6 +47,7 @@ from app.repositories.player_account import PlayerAccountRepository
 from app.repositories.telegram_user import TelegramUserRepository
 from app.repositories.manual_contribution import ManualContributionRepository
 from app.services.active_violation_counter import ActiveViolationCounterService
+from app.services.violation_recalculation import ViolationRecalculationService
 from app.utils.time import utcnow
 
 router = Router(name="admin")
@@ -75,6 +77,57 @@ def _ensure_admin(app_context: AppContext, telegram_id: int) -> None:
 async def _admin_is_registered(app_context: AppContext, telegram_id: int) -> bool:
     async with app_context.session_maker() as session:
         return await RegistrationService(session, app_context.clash_client).is_registered(telegram_id)
+
+
+@router.message(F.text == "🔄 Пересчитать нарушения текущего цикла")
+async def violation_recalculation_start(message: Message, app_context: AppContext) -> None:
+    try:
+        _ensure_admin(app_context, message.from_user.id)
+    except PermissionError:
+        await message.answer("⛔ Недостаточно прав")
+        return
+    await message.answer(
+        "Пересчитать автоматические нарушения всех обычных войн текущего цикла?\n"
+        "Ручные нарушения и другие типы нарушений изменены не будут.",
+        reply_markup=violation_recalculation_confirm_keyboard(),
+    )
+
+
+@router.callback_query(F.data == "violation_recalculation:cancel")
+async def violation_recalculation_cancel(callback: CallbackQuery, app_context: AppContext) -> None:
+    try:
+        _ensure_admin(app_context, callback.from_user.id)
+    except PermissionError:
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    await callback.message.edit_text("❌ Перерасчёт отменён")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "violation_recalculation:confirm")
+async def violation_recalculation_confirm(callback: CallbackQuery, app_context: AppContext) -> None:
+    try:
+        _ensure_admin(app_context, callback.from_user.id)
+    except PermissionError:
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    try:
+        async with app_context.session_maker() as session:
+            result = await ViolationRecalculationService(session).recalculate_current_cycle()
+            await session.commit()
+        await callback.message.edit_text(
+            "✅ Перерасчёт завершён\n\n"
+            f"Войн обработано: {result.wars_processed}\n"
+            f"Атак проверено: {result.attacks_checked}\n"
+            f"Нарушений создано: {result.created}\n"
+            f"Нарушений обновлено: {result.updated}\n"
+            f"Нарушений удалено: {result.deleted}\n"
+            f"Без изменений: {result.unchanged}"
+        )
+    except Exception:
+        logger.exception("Failed to recalculate current-cycle violations")
+        await callback.message.answer("⚠️ Не удалось пересчитать нарушения. Изменения отменены.")
+    await callback.answer()
 
 
 @router.message(F.text == "🔗 Привязать игрока")

@@ -103,27 +103,18 @@ def resolve_allowed_targets_for_attack(
     if any(not is_tripled(position) for position in base_positions):
         return AllowedTargets(positions=frozenset(base_positions))
 
-    nearest_below = next(
-        (
-            position
-            for position in roster_positions
-            if position > base_max_position and not is_tripled(position)
-        ),
-        None,
-    )
-    if nearest_below is not None:
-        return AllowedTargets(positions=frozenset({nearest_below}))
-
-    nearest_above = next(
-        (
-            position
-            for position in reversed(roster_positions)
-            if position < base_min_position and not is_tripled(position)
-        ),
-        None,
-    )
-    if nearest_above is not None:
-        return AllowedTargets(positions=frozenset({nearest_above}))
+    open_positions = [position for position in roster_positions if not is_tripled(position)]
+    if open_positions:
+        nearest_distance = min(
+            abs(position - attacker_position) for position in open_positions
+        )
+        return AllowedTargets(
+            positions=frozenset(
+                position
+                for position in open_positions
+                if abs(position - attacker_position) == nearest_distance
+            )
+        )
 
     return AllowedTargets(allow_any=True)
 

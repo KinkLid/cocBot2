@@ -29,6 +29,15 @@ def admin_sort_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def violation_recalculation_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Пересчитать", callback_data="violation_recalculation:confirm")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="violation_recalculation:cancel")],
+        ]
+    )
+
+
 def manual_contribution_players_keyboard(players: list, page: int, page_size: int = 12) -> InlineKeyboardMarkup:
     total = len(players)
     start = page * page_size
