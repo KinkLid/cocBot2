@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, AliasPath, BaseModel, Field
 
 from app.models.enums import ViolationCode, WarType
 
@@ -177,7 +177,10 @@ class CapitalRaidParticipantDTO(BaseModel):
 
 
 class CapitalRaidAttackDTO(BaseModel):
-    attacker_tag: str = Field(alias="attackerTag")
+    attacker_tag: str = Field(
+        validation_alias=AliasChoices("attackerTag", AliasPath("attacker", "tag")),
+        serialization_alias="attackerTag",
+    )
     destruction_percent: int = Field(default=0, alias="destructionPercent")
 
     model_config = {"populate_by_name": True}
