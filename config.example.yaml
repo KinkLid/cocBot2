@@ -8,3 +8,13 @@ polling:
   clan_members_seconds: 900
   housekeeping_seconds: 3600
 log_level: "INFO"
+telegram_security:
+  # Required in production: obtain these from BotFather/getMe, never put a token here.
+  expected_bot_id: null
+  expected_username: null
+  expected_display_name: null
+  expected_description: null
+  expected_short_description: null
+  expected_commands: null
+  restore_profile: false
+  monitor_interval_seconds: 45

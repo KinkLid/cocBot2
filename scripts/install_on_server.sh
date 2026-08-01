@@ -114,6 +114,9 @@ else
   SERVICE_GROUP="$(id -gn)"
 fi
 
+# An operator may migrate secrets to /etc/cocbot/cocbot.env (root:SERVICE_GROUP 0640).
+# Deployment deliberately never creates, copies, backs up, or overwrites that file.
+
 sed \
   -e "s|__PROJECT_DIR__|${PROJECT_DIR}|g" \
   -e "s|__SERVICE_USER__|${SERVICE_USER}|g" \

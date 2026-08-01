@@ -158,14 +158,16 @@ async def test_main_run_calls_startup_sync(monkeypatch):
     fake_engine = SimpleNamespace(dispose=AsyncMock())
     fake_clash = SimpleNamespace(close=AsyncMock())
     fake_context = SimpleNamespace(clash_client=fake_clash)
+    fake_security_monitor = SimpleNamespace(check=AsyncMock(), run_forever=AsyncMock())
 
-    monkeypatch.setattr(main_module, "Settings", lambda: SimpleNamespace(load_yaml_config=lambda: SimpleNamespace(log_level="INFO"), bot_token="x", clash_api_token="y", log_file="/tmp/log", clash_request_timeout_seconds=5))
+    monkeypatch.setattr(main_module, "Settings", lambda: SimpleNamespace(load_yaml_config=lambda: SimpleNamespace(log_level="INFO", admin_telegram_ids=[]), bot_token="x", clash_api_token="y", log_file="/tmp/log", clash_request_timeout_seconds=5, security_audit_file="/tmp/security-test.jsonl", update_audit_file="/tmp/update-test.jsonl", security_state_file="/tmp/state-test.json", sentinel_bot_token=None, sentinel_admin_chat_ids=""))
     monkeypatch.setattr(main_module, "create_engine_and_sessionmaker", lambda settings: (fake_engine, object()))
     monkeypatch.setattr(main_module, "build_context", lambda settings, config, session_maker: fake_context)
     monkeypatch.setattr(main_module, "Bot", FakeBot)
-    monkeypatch.setattr(main_module, "create_dispatcher", lambda _ctx: fake_dispatcher)
+    monkeypatch.setattr(main_module, "create_dispatcher", lambda _ctx, *_args: fake_dispatcher)
     monkeypatch.setattr(main_module, "create_scheduler", lambda _ctx, _sender: fake_scheduler)
     monkeypatch.setattr(main_module, "StartupSyncService", lambda _ctx, _sender: startup_service)
+    monkeypatch.setattr(main_module, "TelegramSecurityMonitor", lambda *_args: fake_security_monitor)
     monkeypatch.setattr(main_module, "configure_logging", lambda *_args, **_kwargs: None)
 
     with pytest.raises(RuntimeError, match="stop loop"):

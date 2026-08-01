@@ -57,6 +57,12 @@ cover/
 
 # Django stuff:
 *.log
+*.jsonl
+security-state.json
+*.sqlite3
+*.sqlite3-*
+backups/
+exports/
 local_settings.py
 db.sqlite3
 db.sqlite3-journal

@@ -12,6 +12,11 @@ from app.services.registration import RegistrationService, UserAlreadyRegistered
 router = Router(name="registration")
 
 
+def _registration_audit(app_context: AppContext, event_type: str, user_id: int, result: str = "recorded") -> None:
+    if app_context.security_audit is not None:
+        app_context.security_audit.write(event_type, result=result, telegram_user_id=user_id)
+
+
 async def _abort_if_registered(message: Message, state: FSMContext, app_context: AppContext) -> bool:
     async with app_context.session_maker() as session:
         service = RegistrationService(session, app_context.clash_client)
@@ -28,7 +33,9 @@ async def start_registration(message: Message, state: FSMContext, app_context: A
     if await _abort_if_registered(message, state, app_context):
         return
     await state.clear()
+    _registration_audit(app_context, "registration_started", message.from_user.id)
     await state.set_state(RegistrationStates.waiting_for_player_tag)
+    _registration_audit(app_context, "waiting_for_player_tag", message.from_user.id)
     await message.answer("Введите игровой тег аккаунта, например #GJ0C2GUGJ")
 
 
@@ -38,6 +45,7 @@ async def registration_player_tag(message: Message, state: FSMContext, app_conte
         return
     await state.update_data(player_tag=message.text.strip())
     await state.set_state(RegistrationStates.waiting_for_player_token)
+    _registration_audit(app_context, "waiting_for_player_token", message.from_user.id)
     await message.answer("Теперь введите player token из игры")
 
 
@@ -56,12 +64,15 @@ async def registration_player_token(message: Message, state: FSMContext, app_con
                 player_token=message.text.strip(),
             )
         except UserAlreadyRegisteredError:
+            _registration_audit(app_context, "registration_cancelled", message.from_user.id, "already_registered")
             await state.clear()
             await message.answer("✅ Вы уже зарегистрированы. Повторная регистрация не требуется.")
             return
         except ValueError:
+            _registration_audit(app_context, "registration_failed", message.from_user.id, "invalid_credentials")
             await message.answer("❌ Регистрация не удалась: неверный player token")
             return
     await state.clear()
+    _registration_audit(app_context, "registration_completed", message.from_user.id, "success")
     suffix = "Аккаунт уже был привязан." if result.already_linked else "Аккаунт успешно привязан."
     await message.answer(f"✅ {result.player_name} {result.player_tag}\n{suffix}")
