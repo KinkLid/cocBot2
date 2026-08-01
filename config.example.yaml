@@ -17,4 +17,6 @@ telegram_security:
   expected_short_description: null
   expected_commands: null
   restore_profile: false
+  # Set true only after expected_bot_id and expected_username are populated.
+  require_identity_baseline: false
   monitor_interval_seconds: 45

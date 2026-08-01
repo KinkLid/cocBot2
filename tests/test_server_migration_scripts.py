@@ -8,6 +8,7 @@ import sqlite3
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -201,14 +202,14 @@ def test_online_health_success_and_failures(tmp_path: Path) -> None:
 
     class M: 
         def __init__(self, tag: str): self.tag = tag
-    with patch("urllib.request.urlopen") as urlopen, patch("app.clients.clash.HttpClashApiClient") as cls:
-        urlopen.return_value.__enter__.return_value.read.return_value = b'{"ok":true}'
+    fake_bot = SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(id=1)), session=SimpleNamespace(close=AsyncMock()))
+    with patch("aiogram.Bot", return_value=fake_bot), patch("app.clients.clash.HttpClashApiClient") as cls:
         client = AsyncMock(); client.get_clan.return_value = {"members": 50}; client.get_clan_members.return_value = [M(f"#{i}") for i in range(50)]
         cls.return_value.__aenter__.return_value = client
         assert asyncio.run(health.online(project))["clan_received_members"] == 50
-        urlopen.return_value.__enter__.return_value.read.return_value = b'{"ok":false}'
-        with pytest.raises(RuntimeError): asyncio.run(health.online(project))
-        urlopen.return_value.__enter__.return_value.read.return_value = b'{"ok":true}'
+        fake_bot.get_me.side_effect = RuntimeError("token-bearing URL must not escape")
+        with pytest.raises(RuntimeError, match="Telegram getMe failed"): asyncio.run(health.online(project))
+        fake_bot.get_me.side_effect = None; fake_bot.get_me.return_value = SimpleNamespace(id=1)
         client.get_clan.side_effect = RuntimeError("Invalid authorization")
         with pytest.raises(RuntimeError): asyncio.run(health.online(project))
         client.get_clan.side_effect = None; client.get_clan.return_value = {"members": 50}; client.get_clan_members.return_value = [M(f"#{i}") for i in range(45)]
@@ -429,7 +430,7 @@ def test_remote_passwordless_sudo_staging(repo_env_files, tmp_path: Path) -> Non
 
 def test_remote_sudo_required_before_local_stop(repo_env_files, tmp_path: Path) -> None:
     fake, log = make_fake_bin(tmp_path, remote_uid="1000", sudo_ok=False)
-    res = run(["bash", str(SCRIPTS / "migrate_to_new_server.sh"), "testuser@example", "/opt/cocbot"], env=fake_env(fake))
+    res = run(["bash", str(SCRIPTS / "migrate_to_new_server.sh"), "testuser@example", "/opt/cocbot"], env=fake_env(fake, {"COCBOT_TEST_LOCAL_UID": "0"}))
     calls = log.read_text(encoding="utf-8")
     assert res.returncode != 0
     assert "Для автоматического переноса нужен root SSH" in res.stderr

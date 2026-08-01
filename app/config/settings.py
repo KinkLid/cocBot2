@@ -28,6 +28,7 @@ class TelegramSecurityConfig(BaseModel):
     expected_short_description: str | None = None
     expected_commands: list[BotCommandBaseline] | None = None
     restore_profile: bool = False
+    require_identity_baseline: bool = False
     monitor_interval_seconds: int = Field(default=45, ge=30, le=300)
 
 
@@ -87,7 +88,7 @@ def make_sync_sqlalchemy_url(database_url: str) -> str:
 
 
 def ensure_sqlite_database_parent_dir(database_url: str | URL) -> None:
-    url = make_url(str(database_url))
+    url = make_url(database_url)
     if url.get_backend_name() != "sqlite":
         return
 

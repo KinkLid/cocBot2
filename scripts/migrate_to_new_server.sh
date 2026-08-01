@@ -335,7 +335,7 @@ if [[ "${USE_EXISTING_REMOTE_CLONE}" == "1" ]]; then
   remote_root bash -se <<EOF_REMOTE_INSTALL_CLONE
 set -Eeuo pipefail
 mkdir -p '${REMOTE_DIR}/backups/pre-migration-${MIGRATION_ID}' '${REMOTE_DIR}/data'
-for item in .env config.yaml data/clanbot.sqlite3; do [ -e '${REMOTE_DIR}/'"\$item" ] && cp -a '${REMOTE_DIR}/'"\$item" '${REMOTE_DIR}/backups/pre-migration-${MIGRATION_ID}/' || true; done
+for item in config.yaml data/clanbot.sqlite3; do [ -e '${REMOTE_DIR}/'"\$item" ] && cp -a '${REMOTE_DIR}/'"\$item" '${REMOTE_DIR}/backups/pre-migration-${MIGRATION_ID}/' || true; done
 cp '${REMOTE_STAGE}/config/.env' '${REMOTE_DIR}/.env'
 cp '${REMOTE_STAGE}/config/config.yaml' '${REMOTE_DIR}/config.yaml'
 chown '${REMOTE_SERVICE_USER}:${REMOTE_SERVICE_USER}' '${REMOTE_DIR}/.env' '${REMOTE_DIR}/config.yaml'
@@ -350,7 +350,7 @@ else
   remote_root bash -se <<EOF_REMOTE_INSTALL
 set -Eeuo pipefail
 mkdir -p '${REMOTE_DIR}/backups/pre-migration-${MIGRATION_ID}' '${REMOTE_DIR}/data'
-for item in .env config.yaml data/clanbot.sqlite3; do [ -e '${REMOTE_DIR}/'"\$item" ] && cp -a '${REMOTE_DIR}/'"\$item" '${REMOTE_DIR}/backups/pre-migration-${MIGRATION_ID}/' || true; done
+for item in config.yaml data/clanbot.sqlite3; do [ -e '${REMOTE_DIR}/'"\$item" ] && cp -a '${REMOTE_DIR}/'"\$item" '${REMOTE_DIR}/backups/pre-migration-${MIGRATION_ID}/' || true; done
 rsync -a --delete --exclude='.env' --exclude='config.yaml' --exclude='data/' --exclude='logs/' --exclude='exports/' --exclude='backups/' '${REMOTE_STAGE}/code/' '${REMOTE_DIR}/'
 cp '${REMOTE_STAGE}/config/.env' '${REMOTE_DIR}/.env'
 cp '${REMOTE_STAGE}/config/config.yaml' '${REMOTE_DIR}/config.yaml'
@@ -383,7 +383,7 @@ FINAL_BACKUP_DIR="${PROJECT_ROOT}/backups/server-migration/${MIGRATION_ID}"
 mkdir -p "${FINAL_BACKUP_DIR}"
 FINAL_BACKUP_PATH="${FINAL_BACKUP_DIR}/clanbot.sqlite3"
 backup_json="$("${PYTHON_BIN}" scripts/backup_sqlite.py --project-dir "${PROJECT_ROOT}" --output "${FINAL_BACKUP_PATH}")"
-cp .env "${FINAL_BACKUP_DIR}/.env"; cp config.yaml "${FINAL_BACKUP_DIR}/config.yaml"
+cp config.yaml "${FINAL_BACKUP_DIR}/config.yaml"
 printf '%s\n' "${backup_json}" > "${FINAL_BACKUP_DIR}/backup-manifest.json"
 FINAL_SHA256="$(json_field "${FINAL_BACKUP_DIR}/backup-manifest.json" sha256 str)"
 ACTIVE_PLAYERS="$(json_field "${FINAL_BACKUP_DIR}/backup-manifest.json" active_players int)"

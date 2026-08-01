@@ -65,6 +65,7 @@ id "${SERVICE_USER}" >/dev/null 2>&1 || err "Service user does not exist: ${SERV
 
 command -v git >/dev/null 2>&1 || err "git not found"
 command -v systemctl >/dev/null 2>&1 || err "systemctl not found"
+command -v runuser >/dev/null 2>&1 || err "runuser not found"
 
 git_safe() {
   git -c "safe.directory=${PROJECT_DIR}" -C "${PROJECT_DIR}" "$@"
@@ -101,6 +102,15 @@ fi
 
 PYTHON="${PROJECT_DIR}/.venv/bin/python"
 [[ -x "${PYTHON}" ]] || err "Virtualenv Python not found: ${PYTHON}"
+
+echo "[update_from_git] Running security/configuration preflight"
+if ! runuser -u "${SERVICE_USER}" -- "${PYTHON}" "${PROJECT_DIR}/scripts/security_preflight.py" --project-dir "${PROJECT_DIR}"; then
+  if [[ "${PREVIOUS_REVISION}" != "${TARGET_REVISION}" ]]; then
+    echo "[update_from_git] Preflight failed; restoring ${PREVIOUS_REVISION}" >&2
+    git_safe reset --hard "${PREVIOUS_REVISION}"
+  fi
+  err "Security/configuration preflight failed; service was not restarted"
+fi
 
 if [[ "${INSTALL_DEPS}" == "true" ]]; then
   echo "[update_from_git] Installing dependencies"

@@ -43,30 +43,27 @@ def test_update_from_git_uses_safe_directory() -> None:
     assert 'git_safe()' in content
     assert '-c "safe.directory=${PROJECT_DIR}"' in content
     assert 'git_safe rev-parse --abbrev-ref HEAD' in content
-    assert 'git_safe fetch --all --prune' in content
-    assert 'git_safe reset --hard "origin/${CURRENT_BRANCH}"' in content
+    assert 'git_safe fetch origin "${CURRENT_BRANCH}"' in content
+    assert 'git_safe reset --hard "${REMOTE_REF}"' in content
     assert 'git clean' not in content
 
 
-def test_update_from_git_runs_install_as_root() -> None:
+def test_update_from_git_skips_installer_for_routine_updates() -> None:
     content = (REPO_ROOT / "scripts/update_from_git.sh").read_text(encoding="utf-8")
-    assert 'sudo -u cocbot' not in content
-    assert 'runuser -u cocbot' not in content
-    assert 'su -' not in content
-    assert 'chmod +x "${PROJECT_DIR}/scripts/install_on_server.sh"' in content
-    assert 'bash "${PROJECT_DIR}/scripts/install_on_server.sh"' in content
+    assert 'install_on_server.sh' not in content
+    assert 'INSTALL_DEPS=false' in content
+    assert '--install-deps' in content
+    assert 'python -m compileall' not in content
+    assert '"${PYTHON}" -m compileall' in content
 
 
-def test_update_from_git_passes_cocbot_service_user() -> None:
+def test_update_from_git_runs_preflight_as_cocbot() -> None:
     content = (REPO_ROOT / "scripts/update_from_git.sh").read_text(encoding="utf-8")
     assert 'SERVICE_USER="cocbot"' in content
     assert 'id "${SERVICE_USER}"' in content
-    expected_install_call = '''bash "${PROJECT_DIR}/scripts/install_on_server.sh" \\
-  --service-user "${SERVICE_USER}" \\
-  "${PROJECT_DIR}"'''
-    assert expected_install_call in content
+    assert 'runuser -u "${SERVICE_USER}" -- "${PYTHON}"' in content
+    assert 'scripts/security_preflight.py' in content
     assert 'sudo -u cocbot' not in content
-    assert 'runuser -u cocbot' not in content
     assert 'su - cocbot' not in content
 
 
@@ -76,10 +73,11 @@ def test_update_from_git_cannot_rewrite_unit_as_root() -> None:
     systemd_template = (REPO_ROOT / "deploy/systemd/cocbot.service.template").read_text(encoding="utf-8")
 
     assert '[[ "$(id -u)" == "0" ]]' in update_script
+    assert 'install_on_server.sh' not in update_script
     assert 'SERVICE_USER="$(id -un)"' in install_script
-    assert '--service-user "${SERVICE_USER}"' in update_script
     assert 'SERVICE_USER="cocbot"' in update_script
     assert 'User=__SERVICE_USER__' in systemd_template
+
 
 def test_install_script_preserves_existing_env_and_config() -> None:
     content = (REPO_ROOT / "scripts/install_on_server.sh").read_text(encoding="utf-8")

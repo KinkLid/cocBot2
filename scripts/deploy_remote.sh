@@ -52,11 +52,13 @@ if [[ "${TRANSFER_TOOL}" == "rsync" ]]; then
     --filter='P /logs/***' \
     --filter='P /data/***' \
     --filter='P /exports/***' \
+    --filter='P /backups/***' \
     --exclude '.env' \
     --exclude 'config.yaml' \
     --exclude 'logs/' \
     --exclude 'data/' \
     --exclude 'exports/' \
+    --exclude 'backups/' \
     --exclude '.git' \
     --exclude '.venv' \
     --exclude '__pycache__' \
@@ -76,6 +78,7 @@ else
     --exclude='logs/' \
     --exclude='data/' \
     --exclude='exports/' \
+    --exclude='backups/' \
     --exclude='.git' \
     --exclude='.venv' \
     --exclude='__pycache__' \
@@ -90,6 +93,6 @@ else
 fi
 
 ssh "${TARGET}" "chmod +x '${REMOTE_DIR}/scripts/install_on_server.sh'"
-ssh "${TARGET}" "bash '${REMOTE_DIR}/scripts/install_on_server.sh' '${REMOTE_DIR}'"
+ssh "${TARGET}" "bash '${REMOTE_DIR}/scripts/install_on_server.sh' --service-user cocbot '${REMOTE_DIR}'"
 
 echo "[deploy_remote] Done"
