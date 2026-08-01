@@ -15,12 +15,29 @@ class PollingIntervals(BaseModel):
     housekeeping_seconds: int = 3600
 
 
+class BotCommandBaseline(BaseModel):
+    command: str
+    description: str
+
+
+class TelegramSecurityConfig(BaseModel):
+    expected_bot_id: int | None = None
+    expected_username: str | None = None
+    expected_display_name: str | None = None
+    expected_description: str | None = None
+    expected_short_description: str | None = None
+    expected_commands: list[BotCommandBaseline] | None = None
+    restore_profile: bool = False
+    monitor_interval_seconds: int = Field(default=45, ge=30, le=300)
+
+
 class AppYamlConfig(BaseModel):
     main_clan_tag: str
     admin_telegram_ids: list[int] = Field(default_factory=list)
     clan_chat_url: str | None = None
     polling: PollingIntervals = Field(default_factory=PollingIntervals)
     log_level: str = "INFO"
+    telegram_security: TelegramSecurityConfig = Field(default_factory=TelegramSecurityConfig)
 
     @field_validator("main_clan_tag")
     @classmethod
@@ -40,6 +57,11 @@ class Settings(BaseSettings):
     log_file: str = "./logs/clanbot.log"
     telegram_request_timeout_seconds: int = 20
     clash_request_timeout_seconds: int = 20
+    security_audit_file: str = "./logs/security-audit.jsonl"
+    security_state_file: str = "./data/security-state.json"
+    update_audit_file: str = "./logs/update-audit.jsonl"
+    sentinel_bot_token: str | None = None
+    sentinel_admin_chat_ids: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

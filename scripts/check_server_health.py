@@ -7,7 +7,6 @@ import json
 import os
 import sqlite3
 import sys
-import urllib.request
 from pathlib import Path
 from sqlalchemy.engine import make_url
 from alembic.config import Config
@@ -39,12 +38,16 @@ def sqlite_path(project_dir: Path, settings) -> Path:
 
 async def online(project_dir: Path) -> dict[str, object]:
     settings, config = load_settings(project_dir)
-    token = settings.bot_token
-    req = urllib.request.Request(f"https://api.telegram.org/bot{token}/getMe")
-    with urllib.request.urlopen(req, timeout=settings.telegram_request_timeout_seconds) as response:  # noqa: S310
-        payload = json.loads(response.read().decode("utf-8"))
-    if not payload.get("ok"):
-        raise RuntimeError("Telegram getMe failed")
+    from aiogram import Bot  # noqa: PLC0415
+
+    bot = Bot(settings.bot_token)
+    try:
+        await bot.get_me(request_timeout=settings.telegram_request_timeout_seconds)
+    except Exception as exc:
+        # aiogram/network exceptions may contain the request URL. Never render them.
+        raise RuntimeError(f"Telegram getMe failed ({type(exc).__name__})") from None
+    finally:
+        await bot.session.close()
     from app.clients.clash import HttpClashApiClient  # noqa: PLC0415
 
     async with HttpClashApiClient(settings.clash_api_token, timeout_seconds=settings.clash_request_timeout_seconds) as client:

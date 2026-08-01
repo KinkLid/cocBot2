@@ -11,6 +11,7 @@ from app.clients.clash import ClashApiClient, HttpClashApiClient
 from app.config.settings import AppYamlConfig, Settings
 from app.services.auth import AuthService
 from app.services.logs import LogService
+from app.security.audit import JsonlAudit
 
 
 @dataclass(slots=True)
@@ -22,6 +23,7 @@ class AppContext:
     auth_service: AuthService
     log_service: LogService
     export_dir: Path = Path("./exports")
+    security_audit: JsonlAudit | None = None
 
 
 async def send_text_via_bot(bot: Bot, chat_id: int, text: str) -> None:
@@ -37,4 +39,5 @@ def build_context(settings: Settings, config: AppYamlConfig, session_maker: asyn
         clash_client=clash_client,
         auth_service=AuthService(config),
         log_service=LogService(settings.log_file),
+        security_audit=JsonlAudit(settings.security_audit_file, settings.bot_token),
     )
