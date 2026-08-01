@@ -430,7 +430,7 @@ def test_remote_passwordless_sudo_staging(repo_env_files, tmp_path: Path) -> Non
 
 def test_remote_sudo_required_before_local_stop(repo_env_files, tmp_path: Path) -> None:
     fake, log = make_fake_bin(tmp_path, remote_uid="1000", sudo_ok=False)
-    res = run(["bash", str(SCRIPTS / "migrate_to_new_server.sh"), "testuser@example", "/opt/cocbot"], env=fake_env(fake))
+    res = run(["bash", str(SCRIPTS / "migrate_to_new_server.sh"), "testuser@example", "/opt/cocbot"], env=fake_env(fake, {"COCBOT_TEST_LOCAL_UID": "0"}))
     calls = log.read_text(encoding="utf-8")
     assert res.returncode != 0
     assert "Для автоматического переноса нужен root SSH" in res.stderr
