@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     security_audit_file: str = "./logs/security-audit.jsonl"
     security_state_file: str = "./data/security-state.json"
     update_audit_file: str = "./logs/update-audit.jsonl"
+    conversation_log_enabled: bool = False
+    conversation_log_dir: str = "./logs/conversations"
+    conversation_log_max_bytes: int = Field(default=5_000_000, ge=100_000, le=100_000_000)
+    conversation_log_backups: int = Field(default=3, ge=0, le=20)
     sentinel_bot_token: str | None = None
     sentinel_admin_chat_ids: str = ""
 
