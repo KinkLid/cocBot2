@@ -3,7 +3,7 @@ from __future__ import annotations
 from aiogram import Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from app.bot.handlers import admin, common, registration, start, stats
+from app.bot.handlers import admin, common, conversation_admin, registration, start, stats
 from app.bot.middlewares.context import ContextMiddleware
 from app.bot.middlewares.update_audit import UpdateAuditMiddleware
 from app.container import AppContext
@@ -27,5 +27,6 @@ def create_dispatcher(
     dp.include_router(common.router)
     dp.include_router(registration.router)
     dp.include_router(stats.router)
+    dp.include_router(conversation_admin.router)
     dp.include_router(admin.router)
     return dp
