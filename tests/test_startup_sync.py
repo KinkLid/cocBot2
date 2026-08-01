@@ -159,12 +159,32 @@ async def test_main_run_calls_startup_sync(monkeypatch):
     fake_engine = SimpleNamespace(dispose=AsyncMock())
     fake_clash = SimpleNamespace(close=AsyncMock())
     fake_context = SimpleNamespace(clash_client=fake_clash)
+
     async def monitor_forever():
         await asyncio.Event().wait()
 
     fake_security_monitor = SimpleNamespace(check=AsyncMock(), run_forever=monitor_forever)
 
-    monkeypatch.setattr(main_module, "Settings", lambda: SimpleNamespace(load_yaml_config=lambda: SimpleNamespace(log_level="INFO", admin_telegram_ids=[]), bot_token="x", clash_api_token="y", log_file="/tmp/log", clash_request_timeout_seconds=5, security_audit_file="/tmp/security-test.jsonl", update_audit_file="/tmp/update-test.jsonl", security_state_file="/tmp/state-test.json", sentinel_bot_token=None, sentinel_admin_chat_ids=""))
+    monkeypatch.setattr(
+        main_module,
+        "Settings",
+        lambda: SimpleNamespace(
+            load_yaml_config=lambda: SimpleNamespace(log_level="INFO", admin_telegram_ids=[]),
+            bot_token="x",
+            clash_api_token="y",
+            log_file="/tmp/log",
+            clash_request_timeout_seconds=5,
+            security_audit_file="/tmp/security-test.jsonl",
+            update_audit_file="/tmp/update-test.jsonl",
+            security_state_file="/tmp/state-test.json",
+            conversation_log_enabled=False,
+            conversation_log_dir="/tmp/conversations",
+            conversation_log_max_bytes=5_000_000,
+            conversation_log_backups=3,
+            sentinel_bot_token=None,
+            sentinel_admin_chat_ids="",
+        ),
+    )
     monkeypatch.setattr(main_module, "create_engine_and_sessionmaker", lambda settings: (fake_engine, object()))
     monkeypatch.setattr(main_module, "build_context", lambda settings, config, session_maker, **_kwargs: fake_context)
     monkeypatch.setattr(main_module, "Bot", FakeBot)
