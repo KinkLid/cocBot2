@@ -81,14 +81,14 @@ class Settings(BaseSettings):
 
 
 def make_sync_sqlalchemy_url(database_url: str) -> str:
-    url = make_url(str(database_url))
+    url = make_url(database_url)
     if url.get_backend_name() == "sqlite" and "+" in url.drivername:
         return str(url.set(drivername="sqlite"))
     return database_url
 
 
 def ensure_sqlite_database_parent_dir(database_url: str | URL) -> None:
-    url = make_url(str(database_url))
+    url = make_url(database_url)
     if url.get_backend_name() != "sqlite":
         return
 
