@@ -1,63 +1,29 @@
 name: Apply remaining security fixes
 
 on:
-  push:
-    branches:
-      - agent/fix-telegram-security-forensics
+  pull_request:
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
 
 jobs:
   apply:
-    if: github.actor != 'github-actions[bot]'
+    if: github.head_ref == 'agent/fix-telegram-security-forensics' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: agent/fix-telegram-security-forensics
           fetch-depth: 0
-      - name: Apply exact large-file replacements
+      - name: Apply verified patch
+        env:
+          PATCH_B64: ZGlmZiAtLWdpdCBhL3NjcmlwdHMvbWlncmF0ZV90b19uZXdfc2VydmVyLnNoIGIvc2NyaXB0cy9taWdyYXRlX3RvX25ld19zZXJ2ZXIuc2gKaW5kZXggMzM3Njk1Ni4uODIwZGY1YSAxMDA3NTUKLS0tIGEvc2NyaXB0cy9taWdyYXRlX3RvX25ld19zZXJ2ZXIuc2gKKysrIGIvc2NyaXB0cy9taWdyYXRlX3RvX25ld19zZXJ2ZXIuc2gKQEAgLTMzNSw3ICszMzUsNyBAQCBpZiBbWyAiJHtVU0VfRVhJU1RJTkdfUkVNT1RFX0NMT05FfSIgPT0gIjEiIF1dOyB0aGVuCiAgIHJlbW90ZV9yb290IGJhc2ggLXNlIDw8RU9GX1JFTU9URV9JTlNUQUxMX0NMT05FCiBzZXQgLUVldW8gcGlwZWZhaWwKIG1rZGlyIC1wICcke1JFTU9URV9ESVJ9L2JhY2t1cHMvcHJlLW1pZ3JhdGlvbi0ke01JR1JBVElPTl9JRH0nICcke1JFTU9URV9ESVJ9L2RhdGEnCi1mb3IgaXRlbSBpbiAuZW52IGNvbmZpZy55YW1sIGRhdGEvY2xhbmJvdC5zcWxpdGUzOyBkbyBbIC1lICcke1JFTU9URV9ESVJ9LyciXCRpdGVtIiBdICYmIGNwIC1hICcke1JFTU9URV9ESVJ9LyciXCRpdGVtIiAnJHtSRU1PVEVfRElSfS9iYWNrdXBzL3ByZS1taWdyYXRpb24tJHtNSUdSQVRJT05fSUR9LycgfHwgdHJ1ZTsgZG9uZQorZm9yIGl0ZW0gaW4gY29uZmlnLnlhbWwgZGF0YS9jbGFuYm90LnNxbGl0ZTM7IGRvIFsgLWUgJyR7UkVNT1RFX0RJUn0vJyJcJGl0ZW0iIF0gJiYgY3AgLWEgJyR7UkVNT1RFX0RJUn0vJyJcJGl0ZW0iICcke1JFTU9URV9ESVJ9L2JhY2t1cHMvcHJlLW1pZ3JhdGlvbi0ke01JR1JBVElPTl9JRH0vJyB8fCB0cnVlOyBkb25lCiBjcCAnJHtSRU1PVEVfU1RBR0V9L2NvbmZpZy8uZW52JyAnJHtSRU1PVEVfRElSfS8uZW52JwogY3AgJyR7UkVNT1RFX1NUQUdFfS9jb25maWcvY29uZmlnLnlhbWwnICcke1JFTU9URV9ESVJ9L2NvbmZpZy55YW1sJwogY2hvd24gJyR7UkVNT1RFX1NFUlZJQ0VfVVNFUn06JHtSRU1PVEVfU0VSVklDRV9VU0VSfScgJyR7UkVNT1RFX0RJUn0vLmVudicgJyR7UkVNT1RFX0RJUn0vY29uZmlnLnlhbWwnCkBAIC0zNTAsNyArMzUwLDcgQEAgZWxzZQogICByZW1vdGVfcm9vdCBiYXNoIC1zZSA8PEVPRl9SRU1PVEVfSU5TVEFMTAogc2V0IC1FZXVvIHBpcGVmYWlsCiBta2RpciAtcCAnJHtSRU1PVEVfRElSfS9iYWNrdXBzL3ByZS1taWdyYXRpb24tJHtNSUdSQVRJT05fSUR9JyAnJHtSRU1PVEVfRElSfS9kYXRhJwotZm9yIGl0ZW0gaW4gLmVudiBjb25maWcueWFtbCBkYXRhL2NsYW5ib3Quc3FsaXRlMzsgZG8gWyAtZSAnJHtSRU1PVEVfRElSfS8nIlwkaXRlbSIgXSAmJiBjcCAtYSAnJHtSRU1PVEVfRElSfS8nIlwkaXRlbSIgJyR7UkVNT1RFX0RJUn0vYmFja3Vwcy9wcmUtbWlncmF0aW9uLSR7TUlHUkFUSU9OX0lEfS8nIHx8IHRydWU7IGRvbmUKK2ZvciBpdGVtIGluIGNvbmZpZy55YW1sIGRhdGEvY2xhbmJvdC5zcWxpdGUzOyBkbyBbIC1lICcke1JFTU9URV9ESVJ9LyciXCRpdGVtIiBdICYmIGNwIC1hICcke1JFTU9URV9ESVJ9LyciXCRpdGVtIiAnJHtSRU1PVEVfRElSfS9iYWNrdXBzL3ByZS1taWdyYXRpb24tJHtNSUdSQVRJT05fSUR9LycgfHwgdHJ1ZTsgZG9uZQogcnN5bmMgLWEgLS1kZWxldGUgLS1leGNsdWRlPScuZW52JyAtLWV4Y2x1ZGU9J2NvbmZpZy55YW1sJyAtLWV4Y2x1ZGU9J2RhdGEvJyAtLWV4Y2x1ZGU9J2xvZ3MvJyAtLWV4Y2x1ZGU9J2V4cG9ydHMvJyAtLWV4Y2x1ZGU9J2JhY2t1cHMvJyAnJHtSRU1PVEVfU1RBR0V9L2NvZGUvJyAnJHtSRU1PVEVfRElSfS8nCiBjcCAnJHtSRU1PVEVfU1RBR0V9L2NvbmZpZy8uZW52JyAnJHtSRU1PVEVfRElSfS8uZW52JwogY3AgJyR7UkVNT1RFX1NUQUdFfS9jb25maWcvY29uZmlnLnlhbWwnICcke1JFTU9URV9ESVJ9L2NvbmZpZy55YW1sJwpAQCAtMzgzLDcgKzM4Myw3IEBAIEZJTkFMX0JBQ0tVUF9ESVI9IiR7UFJPSkVDVF9ST09UfS9iYWNrdXBzL3NlcnZlci1taWdyYXRpb24vJHtNSUdSQVRJT05fSUR9IgogbWtkaXIgLXAgIiR7RklOQUxfQkFDS1VQX0RJUn0iCiBGSU5BTF9CQUNLVVBfUEFUSD0iJHtGSU5BTF9CQUNLVVBfRElSfS9jbGFuYm90LnNxbGl0ZTMiCiBiYWNrdXBfanNvbj0iJCgiJHtQWVRIT05fQklOfSIgc2NyaXB0cy9iYWNrdXBfc3FsaXRlLnB5IC0tcHJvamVjdC1kaXIgIiR7UFJPSkVDVF9ST09UfSIgLS1vdXRwdXQgIiR7RklOQUxfQkFDS1VQX1BBVEh9IikiCi1jcCAuZW52ICIke0ZJTkFMX0JBQ0tVUF9ESVJ9Ly5lbnYiOyBjcCBjb25maWcueWFtbCAiJHtGSU5BTF9CQUNLVVBfRElSfS9jb25maWcueWFtbCIKK2NwIGNvbmZpZy55YW1sICIke0ZJTkFMX0JBQ0tVUF9ESVJ9L2NvbmZpZy55YW1sIgogcHJpbnRmICclc1xuJyAiJHtiYWNrdXBfanNvbn0iID4gIiR7RklOQUxfQkFDS1VQX0RJUn0vYmFja3VwLW1hbmlmZXN0Lmpzb24iCiBGSU5BTF9TSEEyNTY9IiQoanNvbl9maWVsZCAiJHtGSU5BTF9CQUNLVVBfRElSfS9iYWNrdXAtbWFuaWZlc3QuanNvbiIgc2hhMjU2IHN0cikiCiBBQ1RJVkVfUExBWUVSUz0iJChqc29uX2ZpZWxkICIke0ZJTkFMX0JBQ0tVUF9ESVJ9L2JhY2t1cC1tYW5pZmVzdC5qc29uIiBhY3RpdmVfcGxheWVycyBpbnQpIgpkaWZmIC0tZ2l0IGEvdGVzdHMvdGVzdF9zZXJ2ZXJfbWlncmF0aW9uX3NjcmlwdHMucHkgYi90ZXN0cy90ZXN0X3NlcnZlcl9taWdyYXRpb25fc2NyaXB0cy5weQppbmRleCBlNmZiZWE3Li45YmI0OWQ1IDEwMDY0NAotLS0gYS90ZXN0cy90ZXN0X3NlcnZlcl9taWdyYXRpb25fc2NyaXB0cy5weQorKysgYi90ZXN0cy90ZXN0X3NlcnZlcl9taWdyYXRpb25fc2NyaXB0cy5weQpAQCAtOCw2ICs4LDcgQEAgaW1wb3J0IHNxbGl0ZTMKIGltcG9ydCBzdWJwcm9jZXNzCiBpbXBvcnQgc3lzCiBmcm9tIHBhdGhsaWIgaW1wb3J0IFBhdGgKK2Zyb20gdHlwZXMgaW1wb3J0IFNpbXBsZU5hbWVzcGFjZQogZnJvbSB1bml0dGVzdC5tb2NrIGltcG9ydCBBc3luY01vY2ssIE1hZ2ljTW9jaywgcGF0Y2gKIAogaW1wb3J0IHB5dGVzdApAQCAtMjAxLDE0ICsyMDIsMTQgQEAgZGVmIHRlc3Rfb25saW5lX2hlYWx0aF9zdWNjZXNzX2FuZF9mYWlsdXJlcyh0bXBfcGF0aDogUGF0aCkgLT4gTm9uZToKIAogICAgIGNsYXNzIE06IAogICAgICAgICBkZWYgX19pbml0X18oc2VsZiwgdGFnOiBzdHIpOiBzZWxmLnRhZyA9IHRhZwotICAgIHdpdGggcGF0Y2goInVybGxpYi5yZXF1ZXN0LnVybG9wZW4iKSBhcyB1cmxvcGVuLCBwYXRjaCgiYXBwLmNsaWVudHMuY2xhc2guSHR0cENsYXNoQXBpQ2xpZW50IikgYXMgY2xzOgotICAgICAgICB1cmxvcGVuLnJldHVybl92YWx1ZS5fX2VudGVyX18ucmV0dXJuX3ZhbHVlLnJlYWQucmV0dXJuX3ZhbHVlID0gYid7Im9rIjp0cnVlfScKKyAgICBmYWtlX2JvdCA9IFNpbXBsZU5hbWVzcGFjZShnZXRfbWU9QXN5bmNNb2NrKHJldHVybl92YWx1ZT1TaW1wbGVOYW1lc3BhY2UoaWQ9MSkpLCBzZXNzaW9uPVNpbXBsZU5hbWVzcGFjZShjbG9zZT1Bc3luY01vY2soKSkpCisgICAgd2l0aCBwYXRjaCgiYWlvZ3JhbS5Cb3QiLCByZXR1cm5fdmFsdWU9ZmFrZV9ib3QpLCBwYXRjaCgiYXBwLmNsaWVudHMuY2xhc2guSHR0cENsYXNoQXBpQ2xpZW50IikgYXMgY2xzOgogICAgICAgICBjbGllbnQgPSBBc3luY01vY2soKTsgY2xpZW50LmdldF9jbGFuLnJldHVybl92YWx1ZSA9IHsibWVtYmVycyI6IDUwfTsgY2xpZW50LmdldF9jbGFuX21lbWJlcnMucmV0dXJuX3ZhbHVlID0gW00oZiIje2l9IikgZm9yIGkgaW4gcmFuZ2UoNTApXQogICAgICAgICBjbHMucmV0dXJuX3ZhbHVlLl9fZW50ZXJfXy5yZXR1cm5fdmFsdWUgPSBjbGllbnQKICAgICAgICBhc3NlcnQgYXN5bmNpby5ydW4oaGVhbHRoLm9ubGluZShwcm9qZWN0KSlbImNsYW5fcmVjZWl2ZWRfbWVtYmVycyJdID09IDUwCi0gICAgICAgIHVybG9wZW4ucmV0dXJuX3ZhbHVlLl9fZW50ZXJfXy5yZXR1cm5fdmFsdWUucmVhZC5yZXR1cm5fdmFsdWUgPSBiJ3sib2siOmZhbHNlfScKLSAgICAgICAgd2l0aCBweXRlc3QucmFpc2VzKFJ1bnRpbWVFcnJvcik6IGFzeW5jaW8ucnVuKGhlYWx0aC5vbmxpbmUocHJvamVjdCkpCi0gICAgICAgIHVybG9wZW4ucmV0dXJuX3ZhbHVlLl9fZW50ZXJfXy5yZXR1cm5fdmFsdWUucmVhZC5yZXR1cm5fdmFsdWUgPSBiJ3sib2siOnRydWV9JworICAgICAgICBmYWtlX2JvdC5nZXRfbWUuc2lkZV9lZmZlY3QgPSBSdW50aW1lRXJyb3IoInRva2VuLWJlYXJpbmcgVVJMIG11c3Qgbm90IGVzY2FwZSIpCisgICAgICAgIHdpdGggcHl0ZXN0LnJhaXNlcyhSdW50aW1lRXJyb3IsIG1hdGNoPSJUZWxlZ3JhbSBnZXRNZSBmYWlsZWQiKTogYXN5bmNpby5ydW4oaGVhbHRoLm9ubGluZShwcm9qZWN0KSkKKyAgICAgICAgZmFrZV9ib3QuZ2V0X21lLnNpZGVfZWZmZWN0ID0gTm9uZTsgZmFrZV9ib3QuZ2V0X21lLnJldHVybl92YWx1ZSA9IFNpbXBsZU5hbWVzcGFjZShpZD0xKQogICAgICAgICBjbGllbnQuZ2V0X2NsYW4uc2lkZV9lZmZlY3QgPSBSdW50aW1lRXJyb3IoIkludmFsaWQgYXV0aG9yaXphdGlvbiIpCiAgICAgICAgIHdpdGggcHl0ZXN0LnJhaXNlcyhSdW50aW1lRXJyb3IpOiBhc3luY2lvLnJ1bihoZWFsdGgub25saW5lKHByb2plY3QpKQogICAgICAgICBjbGllbnQuZ2V0X2NsYW4uc2lkZV9lZmZlY3QgPSBOb25lOyBjbGllbnQuZ2V0X2NsYW4ucmV0dXJuX3ZhbHVlID0geyJtZW1iZXJzIjogNTB9OyBjbGllbnQuZ2V0X2NsYW5fbWVtYmVycy5yZXR1cm5fdmFsdWUgPSBbTShmIiN7aX0iKSBmb3IgaSBpbiByYW5nZSg0NSldCg==
         run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          migration = Path('scripts/migrate_to_new_server.sh')
-          text = migration.read_text(encoding='utf-8')
-          old_loop = 'for item in .env config.yaml data/clanbot.sqlite3;'
-          assert text.count(old_loop) == 2, text.count(old_loop)
-          text = text.replace(old_loop, 'for item in config.yaml data/clanbot.sqlite3;')
-          old_backup = 'cp .env "${FINAL_BACKUP_DIR}/.env"; cp config.yaml "${FINAL_BACKUP_DIR}/config.yaml"'
-          assert text.count(old_backup) == 1, text.count(old_backup)
-          text = text.replace(old_backup, 'cp config.yaml "${FINAL_BACKUP_DIR}/config.yaml"')
-          migration.write_text(text, encoding='utf-8')
-
-          tests = Path('tests/test_server_migration_scripts.py')
-          text = tests.read_text(encoding='utf-8')
-          old_import = 'from pathlib import Path\nfrom unittest.mock import AsyncMock, MagicMock, patch\n'
-          new_import = 'from pathlib import Path\nfrom types import SimpleNamespace\nfrom unittest.mock import AsyncMock, MagicMock, patch\n'
-          assert text.count(old_import) == 1, text.count(old_import)
-          text = text.replace(old_import, new_import)
-          start = text.index('    with patch("urllib.request.urlopen")')
-          end = text.index('        client.get_clan.side_effect = None;', start)
-          replacement = '''    fake_bot = SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(id=1)), session=SimpleNamespace(close=AsyncMock()))
-    with patch("aiogram.Bot", return_value=fake_bot), patch("app.clients.clash.HttpClashApiClient") as cls:
-        client = AsyncMock(); client.get_clan.return_value = {"members": 50}; client.get_clan_members.return_value = [M(f"#{i}") for i in range(50)]
-        cls.return_value.__aenter__.return_value = client
-        assert asyncio.run(health.online(project))["clan_received_members"] == 50
-        fake_bot.get_me.side_effect = RuntimeError("token-bearing URL must not escape")
-        with pytest.raises(RuntimeError, match="Telegram getMe failed"): asyncio.run(health.online(project))
-        fake_bot.get_me.side_effect = None; fake_bot.get_me.return_value = SimpleNamespace(id=1)
-        client.get_clan.side_effect = RuntimeError("Invalid authorization")
-'''
-          text = text[:start] + replacement + text[end:]
-          tests.write_text(text, encoding='utf-8')
-
-          settings = Path('app/config/settings.py')
-          text = settings.read_text(encoding='utf-8')
-          text = text.replace('url = make_url(str(database_url))', 'url = make_url(database_url)')
-          settings.write_text(text, encoding='utf-8')
-          PY
+          printf '%s' "$PATCH_B64" | base64 -d > /tmp/security-fix.patch
+          git apply --check /tmp/security-fix.patch
+          git apply /tmp/security-fix.patch
+          sed -i 's/url = make_url(str(database_url))/url = make_url(database_url)/' app/config/settings.py
           python -m compileall -q app scripts tests
           bash -n scripts/migrate_to_new_server.sh scripts/deploy_remote.sh scripts/update_from_git.sh
           git config user.name github-actions[bot]
