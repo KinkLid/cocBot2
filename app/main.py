@@ -12,6 +12,7 @@ from aiogram.enums import ParseMode
 from app.bot.app import create_dispatcher
 from app.config.settings import Settings
 from app.container import build_context, send_text_via_bot
+from app.conversations import ConversationLogger, OutgoingConversationMiddleware
 from app.db.session import create_engine_and_sessionmaker
 from app.jobs.scheduler import create_scheduler
 from app.security.audit import JsonlAudit, SecurityState
@@ -58,6 +59,15 @@ async def run() -> None:
     bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     update_audit = JsonlAudit(settings.update_audit_file, settings.bot_token, max_bytes=20_000_000)
     security_state = SecurityState(settings.security_state_file)
+    conversation_logger: ConversationLogger | None = None
+    if settings.conversation_log_enabled:
+        conversation_logger = ConversationLogger(
+            settings.conversation_log_dir,
+            max_bytes=settings.conversation_log_max_bytes,
+            backup_count=settings.conversation_log_backups,
+        )
+        bot.session.middleware(OutgoingConversationMiddleware(conversation_logger))
+        logger.info("Conversation logging enabled: %s", conversation_logger.directory)
 
     sentinel = None
     if settings.sentinel_bot_token:
@@ -67,7 +77,7 @@ async def run() -> None:
     sentinel_ids = [int(value.strip()) for value in settings.sentinel_admin_chat_ids.split(",") if value.strip()]
     alerts = SecurityAlerts(bot, audit, config.admin_telegram_ids, sentinel, sentinel_ids, security_state)
     security_monitor = TelegramSecurityMonitor(bot, config, audit, security_state, alerts)
-    dp = create_dispatcher(app_context, update_audit, security_state)
+    dp = create_dispatcher(app_context, update_audit, security_state, conversation_logger)
     sender = lambda chat_id, text: send_text_via_bot(bot, chat_id, text)
     scheduler = create_scheduler(app_context, sender)
     scheduler_started = False
