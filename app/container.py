@@ -30,7 +30,13 @@ async def send_text_via_bot(bot: Bot, chat_id: int, text: str) -> None:
     await bot.send_message(chat_id=chat_id, text=text)
 
 
-def build_context(settings: Settings, config: AppYamlConfig, session_maker: async_sessionmaker[AsyncSession]) -> AppContext:
+def build_context(
+    settings: Settings,
+    config: AppYamlConfig,
+    session_maker: async_sessionmaker[AsyncSession],
+    *,
+    security_audit: JsonlAudit | None = None,
+) -> AppContext:
     clash_client = HttpClashApiClient(settings.clash_api_token, timeout_seconds=settings.clash_request_timeout_seconds)
     return AppContext(
         settings=settings,
@@ -39,5 +45,5 @@ def build_context(settings: Settings, config: AppYamlConfig, session_maker: asyn
         clash_client=clash_client,
         auth_service=AuthService(config),
         log_service=LogService(settings.log_file),
-        security_audit=JsonlAudit(settings.security_audit_file, settings.bot_token),
+        security_audit=security_audit,
     )

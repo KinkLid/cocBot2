@@ -47,3 +47,23 @@ def test_systemd_has_one_polling_process():
     unit = open("deploy/systemd/cocbot.service.template", encoding="utf-8").read()
     assert unit.count("ExecStart=") == 1
     assert "app.main" in unit and "getUpdates" not in unit
+
+
+def test_deployment_scripts_preserve_backups_and_force_service_user():
+    deploy = open("scripts/deploy_remote.sh", encoding="utf-8").read()
+    assert "--filter='P /backups/***'" in deploy
+    assert "--exclude 'backups/'" in deploy
+    assert "--exclude='backups/'" in deploy
+    assert "install_on_server.sh' --service-user cocbot" in deploy
+
+
+def test_migration_does_not_create_persistent_env_backups():
+    source = open("scripts/migrate_to_new_server.sh", encoding="utf-8").read()
+    assert 'FINAL_BACKUP_DIR}/.env' not in source
+    assert "for item in .env config.yaml data/clanbot.sqlite3" not in source
+
+
+def test_update_runs_security_preflight_before_restart():
+    source = open("scripts/update_from_git.sh", encoding="utf-8").read()
+    assert source.index("scripts/security_preflight.py") < source.index('systemctl restart "${SERVICE_NAME}"')
+    assert 'git_safe reset --hard "${PREVIOUS_REVISION}"' in source

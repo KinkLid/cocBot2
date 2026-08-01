@@ -1,0 +1,68 @@
+name: Apply remaining security fixes
+
+on:
+  push:
+    branches:
+      - agent/fix-telegram-security-forensics
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-telegram-security-forensics
+          fetch-depth: 0
+      - name: Apply exact large-file replacements
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          migration = Path('scripts/migrate_to_new_server.sh')
+          text = migration.read_text(encoding='utf-8')
+          old_loop = 'for item in .env config.yaml data/clanbot.sqlite3;'
+          assert text.count(old_loop) == 2, text.count(old_loop)
+          text = text.replace(old_loop, 'for item in config.yaml data/clanbot.sqlite3;')
+          old_backup = 'cp .env "${FINAL_BACKUP_DIR}/.env"; cp config.yaml "${FINAL_BACKUP_DIR}/config.yaml"'
+          assert text.count(old_backup) == 1, text.count(old_backup)
+          text = text.replace(old_backup, 'cp config.yaml "${FINAL_BACKUP_DIR}/config.yaml"')
+          migration.write_text(text, encoding='utf-8')
+
+          tests = Path('tests/test_server_migration_scripts.py')
+          text = tests.read_text(encoding='utf-8')
+          old_import = 'from pathlib import Path\nfrom unittest.mock import AsyncMock, MagicMock, patch\n'
+          new_import = 'from pathlib import Path\nfrom types import SimpleNamespace\nfrom unittest.mock import AsyncMock, MagicMock, patch\n'
+          assert text.count(old_import) == 1, text.count(old_import)
+          text = text.replace(old_import, new_import)
+          start = text.index('    with patch("urllib.request.urlopen")')
+          end = text.index('        client.get_clan.side_effect = None;', start)
+          replacement = '''    fake_bot = SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(id=1)), session=SimpleNamespace(close=AsyncMock()))
+    with patch("aiogram.Bot", return_value=fake_bot), patch("app.clients.clash.HttpClashApiClient") as cls:
+        client = AsyncMock(); client.get_clan.return_value = {"members": 50}; client.get_clan_members.return_value = [M(f"#{i}") for i in range(50)]
+        cls.return_value.__aenter__.return_value = client
+        assert asyncio.run(health.online(project))["clan_received_members"] == 50
+        fake_bot.get_me.side_effect = RuntimeError("token-bearing URL must not escape")
+        with pytest.raises(RuntimeError, match="Telegram getMe failed"): asyncio.run(health.online(project))
+        fake_bot.get_me.side_effect = None; fake_bot.get_me.return_value = SimpleNamespace(id=1)
+        client.get_clan.side_effect = RuntimeError("Invalid authorization")
+'''
+          text = text[:start] + replacement + text[end:]
+          tests.write_text(text, encoding='utf-8')
+
+          settings = Path('app/config/settings.py')
+          text = settings.read_text(encoding='utf-8')
+          text = text.replace('url = make_url(str(database_url))', 'url = make_url(database_url)')
+          settings.write_text(text, encoding='utf-8')
+          PY
+          python -m compileall -q app scripts tests
+          bash -n scripts/migrate_to_new_server.sh scripts/deploy_remote.sh scripts/update_from_git.sh
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app/config/settings.py scripts/migrate_to_new_server.sh tests/test_server_migration_scripts.py
+          git rm .github/workflows/apply-security-fix.yml
+          git commit -m "Finish Telegram security deployment fixes"
+          git push origin HEAD:agent/fix-telegram-security-forensics

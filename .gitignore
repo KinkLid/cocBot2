@@ -59,6 +59,7 @@ cover/
 *.log
 *.jsonl
 security-state.json
+.*.lock
 *.sqlite3
 *.sqlite3-*
 backups/
