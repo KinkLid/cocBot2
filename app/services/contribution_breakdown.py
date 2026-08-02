@@ -135,6 +135,11 @@ class ContributionBreakdownService:
 
     @staticmethod
     def format_short_breakdown(breakdown: PlayerContributionBreakdown) -> str:
+        manual_label = (
+            f"Ручные начисления: +{breakdown.manual_adjustment_total}"
+            if breakdown.manual_adjustment_total >= 0
+            else f"Ручные корректировки: {breakdown.manual_adjustment_total:+d}"
+        )
         return "\n".join(
             [
                 "📋 Мой вклад",
@@ -144,7 +149,7 @@ class ContributionBreakdownService:
                 f"Неиспользованные атаки: {breakdown.unused_attack_penalty_total:+.2f}",
                 f"Донаты: {breakdown.donation_score_total:+.2f} "
                 f"(сырой донат: {breakdown.donation_total})",
-                f"Ручные корректировки: {breakdown.manual_adjustment_total:+d}",
+                manual_label,
                 f"Активные нарушения: {breakdown.active_violations}",
                 "",
                 f"Итого: {breakdown.final_score:.2f}",
@@ -170,7 +175,13 @@ class ContributionBreakdownService:
                 heading = item.title
             lines.extend([f"{index}. {heading}", f"{item.score_delta:+.2f}", ""])
         if manual_items:
-            lines.extend([f"🧮 Ручные корректировки: {breakdown.manual_adjustment_total:+d}", ""])
+            only_positive = all(item.score_delta > 0 for item in manual_items)
+            heading = (
+                f"➕ Ручные начисления: +{breakdown.manual_adjustment_total}"
+                if only_positive
+                else f"🧮 Ручные корректировки: {breakdown.manual_adjustment_total:+d}"
+            )
+            lines.extend([heading, ""])
             for item in manual_items:
                 when = item.occurred_at.strftime("%d.%m.%Y %H:%M UTC") if item.occurred_at else ""
                 comment, author = (item.details or "").split("\n", 1)
