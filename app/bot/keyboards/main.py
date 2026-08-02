@@ -9,32 +9,12 @@ def main_menu(is_admin: bool, is_registered: bool) -> ReplyKeyboardMarkup:
         rows.append([KeyboardButton(text="📝 Регистрация")])
     rows.extend(
         [
-            [KeyboardButton(text="🔗 Ссылка на чат клана")],
-            [KeyboardButton(text="📊 Моя статистика")],
-            [KeyboardButton(text="🏆 Общий вклад")],
-            [KeyboardButton(text="📚 Вклад прошлого цикла")],
-            [KeyboardButton(text="📋 Мой вклад")],
+            [KeyboardButton(text="📊 Моя статистика"), KeyboardButton(text="📋 Мой вклад")],
+            [KeyboardButton(text="🏆 Общий вклад"), KeyboardButton(text="🔗 Ссылка на чат клана")],
         ]
     )
     if is_admin:
-        rows.extend(
-            [
-                [KeyboardButton(text="👥 Список игроков")],
-                [KeyboardButton(text="🔗 Привязать игрока")],
-                [KeyboardButton(text="🧾 Разбор вклада")],
-                [KeyboardButton(text="📈 Статистика клана")],
-                [KeyboardButton(text="📦 Выгрузка JSON")],
-                [KeyboardButton(text="🏰 Столица"), KeyboardButton(text="🧪 Dev вклад в столицу"), KeyboardButton(text="🧪 Dev-донаты")],
-                [KeyboardButton(text="🚨 Нарушения"), KeyboardButton(text="♻️ Сбросить счетчик нарушений")],
-                [KeyboardButton(text="🗄 Все нарушения")],
-                [KeyboardButton(text="🔄 Пересчитать нарушения текущего цикла")],
-                [KeyboardButton(text="🚩 Чужой флажок"), KeyboardButton(text="➕ Начислить баллы")],
-                [KeyboardButton(text="✏️ Обновить ссылку на чат")],
-                [KeyboardButton(text="💬 Переписки с ботом")],
-                [KeyboardButton(text="📜 Последние логи")],
-                [KeyboardButton(text="🗂 Скачать лог-файл")],
-            ]
-        )
+        rows.append([KeyboardButton(text="🛡 Админка")])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
