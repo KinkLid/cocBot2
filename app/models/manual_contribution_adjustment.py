@@ -11,7 +11,7 @@ from app.db.base import Base
 class ManualContributionAdjustment(Base):
     __tablename__ = "manual_contribution_adjustments"
     __table_args__ = (
-        CheckConstraint("points > 0", name="ck_manual_contribution_adjustments_points_positive"),
+        CheckConstraint("points != 0", name="ck_manual_contribution_adjustments_points_non_zero"),
         Index("ix_manual_contribution_adjustments_player_id", "player_id"),
         Index("ix_manual_contribution_adjustments_clan_tag", "clan_tag"),
         Index("ix_manual_contribution_adjustments_created_at", "created_at"),
