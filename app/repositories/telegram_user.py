@@ -1,11 +1,22 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import exists, select
+from sqlalchemy import delete, exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import TelegramPlayerLink, TelegramUser
+from app.models import PlayerAccount, TelegramPlayerLink, TelegramUser
+
+
+@dataclass(slots=True)
+class TelegramPlayerLinkInfo:
+    link_id: int
+    telegram_id: int
+    username: str | None
+    player_tag: str
+    player_name: str
+    current_in_clan: bool
 
 
 class TelegramUserRepository:
@@ -66,3 +77,36 @@ class TelegramUserRepository:
             select(TelegramPlayerLink).where(TelegramPlayerLink.telegram_user_id == telegram_user_id).order_by(TelegramPlayerLink.linked_at)
         )
         return list(result.scalars().all())
+
+    async def list_all_links(self) -> list[TelegramPlayerLinkInfo]:
+        rows = await self.session.execute(
+            select(
+                TelegramPlayerLink.id,
+                TelegramUser.telegram_id,
+                TelegramUser.username,
+                TelegramPlayerLink.player_tag,
+                PlayerAccount.name,
+                PlayerAccount.current_in_clan,
+            )
+            .join(TelegramUser, TelegramUser.id == TelegramPlayerLink.telegram_user_id)
+            .outerjoin(PlayerAccount, PlayerAccount.player_tag == TelegramPlayerLink.player_tag)
+            .order_by(PlayerAccount.current_clan_rank.asc().nulls_last(), PlayerAccount.name.asc(), TelegramUser.telegram_id.asc())
+        )
+        return [
+            TelegramPlayerLinkInfo(
+                link_id=row[0],
+                telegram_id=row[1],
+                username=row[2],
+                player_tag=row[3],
+                player_name=row[4] or row[3],
+                current_in_clan=bool(row[5]),
+            )
+            for row in rows.all()
+        ]
+
+    async def remove_link(self, link_id: int) -> bool:
+        result = await self.session.execute(
+            delete(TelegramPlayerLink).where(TelegramPlayerLink.id == link_id)
+        )
+        await self.session.flush()
+        return bool(result.rowcount)
