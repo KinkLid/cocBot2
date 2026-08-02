@@ -9,6 +9,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.container import AppContext
+from app.conversations import suppress_outgoing_conversation_logging
 from app.services.conversation_history import ConversationHistoryService, ConversationPage, ConversationUser
 
 router = Router(name="conversation_admin")
@@ -143,6 +144,21 @@ def _format_history(page: ConversationPage) -> str:
     return "\n\n".join(blocks)
 
 
+async def _answer_unlogged(message: Message, text: str, **kwargs: Any) -> None:
+    with suppress_outgoing_conversation_logging():
+        await message.answer(text, **kwargs)
+
+
+async def _edit_unlogged(message: Message, text: str, **kwargs: Any) -> None:
+    with suppress_outgoing_conversation_logging():
+        await message.edit_text(text, **kwargs)
+
+
+async def _delete_unlogged(message: Message) -> None:
+    with suppress_outgoing_conversation_logging():
+        await message.delete()
+
+
 async def _deny_message(message: Message) -> None:
     await message.answer("⛔ Недостаточно прав")
 
@@ -163,7 +179,8 @@ async def conversation_users(message: Message, app_context: AppContext) -> None:
     if not users:
         await message.answer("Переписок пока нет.")
         return
-    await message.answer(
+    await _answer_unlogged(
+        message,
         "💬 <b>Переписки с ботом</b>\n\nВыберите пользователя:",
         reply_markup=_users_keyboard(users, 0),
     )
@@ -180,12 +197,13 @@ async def conversation_users_page(callback: CallbackQuery, app_context: AppConte
         page = 0
     users = _service(app_context).list_users()
     if not users:
-        await callback.message.edit_text("Переписок пока нет.")
+        await _edit_unlogged(callback.message, "Переписок пока нет.")
         await callback.answer()
         return
     total_pages = max(1, (len(users) + _USERS_PER_PAGE - 1) // _USERS_PER_PAGE)
     page = min(max(page, 0), total_pages - 1)
-    await callback.message.edit_text(
+    await _edit_unlogged(
+        callback.message,
         f"💬 <b>Переписки с ботом</b>\n\nВыберите пользователя · страница {page + 1}/{total_pages}:",
         reply_markup=_users_keyboard(users, page),
     )
@@ -208,7 +226,8 @@ async def conversation_view(callback: CallbackQuery, app_context: AppContext) ->
     if page is None:
         await callback.answer("Переписка не найдена", show_alert=True)
         return
-    await callback.message.edit_text(
+    await _edit_unlogged(
+        callback.message,
         _format_history(page),
         reply_markup=_history_keyboard(page),
     )
@@ -221,7 +240,7 @@ async def conversation_close(callback: CallbackQuery, app_context: AppContext) -
         await _deny_callback(callback)
         return
     try:
-        await callback.message.delete()
+        await _delete_unlogged(callback.message)
     except TelegramBadRequest:
         await callback.answer("Не удалось удалить сообщение", show_alert=True)
         return

@@ -8,7 +8,11 @@ import pytest
 
 from app.bot.states.registration import RegistrationStates
 from app.conversations.logger import ConversationLogger, incoming_record, outgoing_record
-from app.conversations.middlewares import IncomingConversationMiddleware, OutgoingConversationMiddleware
+from app.conversations.middlewares import (
+    IncomingConversationMiddleware,
+    OutgoingConversationMiddleware,
+    suppress_outgoing_conversation_logging,
+)
 
 
 def read_jsonl(path: Path) -> list[dict]:
@@ -152,3 +156,25 @@ async def test_outgoing_middleware_writes_after_success(tmp_path):
     rows = read_jsonl(tmp_path / "user_101.jsonl")
     assert rows[0]["direction"] == "outgoing"
     assert rows[0]["text"] == "bot reply"
+
+
+@pytest.mark.asyncio
+async def test_outgoing_middleware_skips_suppressed_admin_history(tmp_path):
+    conversation_logger = ConversationLogger(tmp_path)
+    middleware = OutgoingConversationMiddleware(conversation_logger)
+    method = SendMessage(1, "чужая переписка")
+    result = SimpleNamespace(
+        chat=SimpleNamespace(id=1, type="private", username="admin", first_name="Admin", last_name=None),
+        message_id=9,
+        text="чужая переписка",
+        caption=None,
+    )
+
+    async def make_request(_bot, _method):
+        return result
+
+    with suppress_outgoing_conversation_logging():
+        returned = await middleware(make_request, SimpleNamespace(), method)
+
+    assert returned is result
+    assert not (tmp_path / "user_1.jsonl").exists()
