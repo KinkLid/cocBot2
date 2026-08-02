@@ -5,11 +5,12 @@ from datetime import datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models import ManualContributionAdjustment, PlayerAccount
 
 
-@dataclass(slots=True)
+@dataclass
 class ManualContributionPlayerOption:
     player_id: int
     player_tag: str
@@ -49,8 +50,8 @@ class ManualContributionRepository:
         created_at: datetime,
         operation_token: str,
     ) -> ManualContributionAdjustment:
-        if points <= 0:
-            raise ValueError("points must be positive")
+        if points == 0 or abs(points) > 10_000:
+            raise ValueError("points must be non-zero and within -10000..10000")
         if not (3 <= len(comment.strip()) <= 500):
             raise ValueError("comment must contain 3 to 500 characters")
         adjustment = ManualContributionAdjustment(
@@ -66,7 +67,6 @@ class ManualContributionRepository:
         self.session.add(adjustment)
         await self.session.flush()
         return adjustment
-
 
     async def get_by_operation_token(self, operation_token: str) -> ManualContributionAdjustment | None:
         if not operation_token:
@@ -102,6 +102,19 @@ class ManualContributionRepository:
                 ManualContributionAdjustment.created_at < period_end,
             )
             .order_by(ManualContributionAdjustment.created_at.asc(), ManualContributionAdjustment.id.asc())
+        )
+        return list(rows.all())
+
+    async def adjustments_in_period(self, clan_tag: str, period_start: datetime, period_end: datetime) -> list[ManualContributionAdjustment]:
+        rows = await self.session.scalars(
+            select(ManualContributionAdjustment)
+            .options(selectinload(ManualContributionAdjustment.player))
+            .where(
+                ManualContributionAdjustment.clan_tag == clan_tag,
+                ManualContributionAdjustment.created_at >= period_start,
+                ManualContributionAdjustment.created_at < period_end,
+            )
+            .order_by(ManualContributionAdjustment.created_at.desc(), ManualContributionAdjustment.id.desc())
         )
         return list(rows.all())
 

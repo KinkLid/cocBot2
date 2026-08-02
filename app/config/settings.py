@@ -14,6 +14,14 @@ class PollingIntervals(BaseModel):
     clan_members_seconds: int = 900
     housekeeping_seconds: int = 3600
 
+    @property
+    def war_seconds(self) -> int:
+        return self.active_war_seconds
+
+    @property
+    def clan_seconds(self) -> int:
+        return self.clan_members_seconds
+
 
 class BotCommandBaseline(BaseModel):
     command: str
