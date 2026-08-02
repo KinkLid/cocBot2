@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.models import ManualContributionAdjustment, PlayerAccount
 
 
-@dataclass(slots=True)
+@dataclass
 class ManualContributionPlayerOption:
     player_id: int
     player_tag: str
