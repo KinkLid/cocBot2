@@ -16,11 +16,15 @@ from app.conversations import ConversationLogger, OutgoingConversationMiddleware
 from app.db.session import create_engine_and_sessionmaker
 from app.jobs.scheduler import create_scheduler
 from app.security.audit import JsonlAudit, SecurityState
-from app.security.monitor import SecurityAlerts, TelegramSecurityMonitor
+from app.security.monitor import SecurityAlerts
+from app.security.resilient_monitor import ResilientTelegramSecurityMonitor
 from app.services.startup_sync import StartupSyncService
 from app.utils.logging import configure_logging
 
 logger = logging.getLogger(__name__)
+
+# Kept as a module-level seam for startup tests and operator overrides.
+TelegramSecurityMonitor = ResilientTelegramSecurityMonitor
 
 
 async def _await_while_monitoring(
