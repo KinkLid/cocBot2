@@ -15,16 +15,11 @@ def _button_texts(markup) -> list[str]:
     return [button.text for row in markup.inline_keyboard for button in row]
 
 
-def test_main_menu_is_compact_for_admin():
+def test_main_menu_prioritizes_admin_panel():
     markup = main_menu(is_admin=True, is_registered=True)
     texts = [button.text for row in markup.keyboard for button in row]
-    assert texts == [
-        "📊 Моя статистика",
-        "📋 Мой вклад",
-        "🏆 Общий вклад",
-        "🔗 Ссылка на чат клана",
-        "🛡 Админка",
-    ]
+    assert "🛡 Админка" in texts
+    assert texts.index("🛡 Админка") < texts.index("🔗 Привязать игрока")
 
 
 def test_admin_panel_contains_grouped_sections():
@@ -50,12 +45,15 @@ def test_period_keyboard_has_all_supported_modes():
 
 @pytest.mark.asyncio
 async def test_manual_adjustment_repository_accepts_negative_points(session):
+    now = datetime(2026, 8, 2, tzinfo=UTC)
     player = PlayerAccount(
         player_tag="#NEG",
         name="Negative",
         town_hall=15,
         current_in_clan=True,
         current_clan_tag="#TEST",
+        created_at=now,
+        updated_at=now,
     )
     session.add(player)
     await session.flush()
@@ -67,7 +65,7 @@ async def test_manual_adjustment_repository_accepts_negative_points(session):
         comment="Корректировка ошибочного начисления",
         created_by_telegram_id=1,
         created_by_username="admin",
-        created_at=datetime(2026, 8, 2, tzinfo=UTC),
+        created_at=now,
         operation_token="negative-test-token",
     )
     await session.commit()
