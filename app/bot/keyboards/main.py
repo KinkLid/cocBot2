@@ -10,11 +10,19 @@ def main_menu(is_admin: bool, is_registered: bool) -> ReplyKeyboardMarkup:
     rows.extend(
         [
             [KeyboardButton(text="📊 Моя статистика"), KeyboardButton(text="📋 Мой вклад")],
-            [KeyboardButton(text="🏆 Общий вклад"), KeyboardButton(text="🔗 Ссылка на чат клана")],
+            [KeyboardButton(text="🏆 Общий вклад"), KeyboardButton(text="📚 Вклад прошлого цикла")],
+            [KeyboardButton(text="🔗 Ссылка на чат клана")],
         ]
     )
     if is_admin:
-        rows.append([KeyboardButton(text="🛡 Админка")])
+        rows.extend(
+            [
+                [KeyboardButton(text="🛡 Админка")],
+                [KeyboardButton(text="🔗 Привязать игрока"), KeyboardButton(text="➕ Начислить баллы")],
+                [KeyboardButton(text="🚩 Чужой флажок"), KeyboardButton(text="🧾 Разбор вклада")],
+                [KeyboardButton(text="🗄 Все нарушения"), KeyboardButton(text="🧪 Dev вклад в столицу")],
+            ]
+        )
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
