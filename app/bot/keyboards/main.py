@@ -30,6 +30,7 @@ def main_menu(is_admin: bool, is_registered: bool) -> ReplyKeyboardMarkup:
                 [KeyboardButton(text="🔄 Пересчитать нарушения текущего цикла")],
                 [KeyboardButton(text="🚩 Чужой флажок"), KeyboardButton(text="➕ Начислить баллы")],
                 [KeyboardButton(text="✏️ Обновить ссылку на чат")],
+                [KeyboardButton(text="💬 Переписки с ботом")],
                 [KeyboardButton(text="📜 Последние логи")],
                 [KeyboardButton(text="🗂 Скачать лог-файл")],
             ]
