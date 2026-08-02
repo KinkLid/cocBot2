@@ -61,12 +61,13 @@ class ContributionBreakdownService:
             manual_total = sum(item.points for item in manual_adjustments)
             for adj in manual_adjustments:
                 author = f"@{adj.created_by_username}" if adj.created_by_username else f"Telegram ID {adj.created_by_telegram_id}"
+                action = "начисление" if adj.points > 0 else "списание"
                 items.append(ContributionBreakdownItem(
                     kind="manual_adjustment",
-                    title="Ручное начисление",
+                    title=f"Ручное {action}",
                     occurred_at=adj.created_at,
                     score_delta=float(adj.points),
-                    details=f"{adj.comment}\n  Начислил: {author}",
+                    details=f"{adj.comment}\n  Выполнил: {author}",
                 ))
         attack_total = sum(item.score_delta for item in items if item.kind == "attack")
         penalty_total = sum(
@@ -143,7 +144,7 @@ class ContributionBreakdownService:
                 f"Неиспользованные атаки: {breakdown.unused_attack_penalty_total:+.2f}",
                 f"Донаты: {breakdown.donation_score_total:+.2f} "
                 f"(сырой донат: {breakdown.donation_total})",
-                f"Ручные начисления: +{breakdown.manual_adjustment_total}",
+                f"Ручные корректировки: {breakdown.manual_adjustment_total:+d}",
                 f"Активные нарушения: {breakdown.active_violations}",
                 "",
                 f"Итого: {breakdown.final_score:.2f}",
@@ -169,12 +170,12 @@ class ContributionBreakdownService:
                 heading = item.title
             lines.extend([f"{index}. {heading}", f"{item.score_delta:+.2f}", ""])
         if manual_items:
-            lines.extend([f"➕ Ручные начисления: +{breakdown.manual_adjustment_total}", ""])
+            lines.extend([f"🧮 Ручные корректировки: {breakdown.manual_adjustment_total:+d}", ""])
             for item in manual_items:
                 when = item.occurred_at.strftime("%d.%m.%Y %H:%M UTC") if item.occurred_at else ""
                 comment, author = (item.details or "").split("\n", 1)
-                lines.extend([f"• +{int(item.score_delta)} — {comment}", author, f"  {when}", ""])
+                lines.extend([f"• {int(item.score_delta):+d} — {comment}", author, f"  {when}", ""])
         if not breakdown.items:
-            lines.extend(["Нет начислений за текущий цикл.", ""])
+            lines.extend(["Нет начислений за выбранный период.", ""])
         lines.append(f"Итого: {breakdown.final_score:.2f}")
         return "\n".join(lines)
