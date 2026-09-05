@@ -9,7 +9,7 @@ from aiogram.exceptions import TelegramNetworkError
 
 from app.config.settings import AppYamlConfig
 from app.security.audit import JsonlAudit, SecurityState
-from app.security.monitor import SecurityAlerts
+from app.security.monitor import SecurityAlerts, SecurityViolation, TelegramSecurityMonitor
 from app.security.resilient_monitor import ResilientTelegramSecurityMonitor
 
 
@@ -44,6 +44,40 @@ def make_monitor(tmp_path):
 
 def network_error() -> TelegramNetworkError:
     return TelegramNetworkError(method=GetWebhookInfo(), message="temporary network failure")
+
+
+@pytest.mark.asyncio
+async def test_startup_network_failure_retries_until_security_check_succeeds(tmp_path, monkeypatch):
+    monitor, bot, audit = make_monitor(tmp_path)
+    base_check = AsyncMock(side_effect=[network_error(), None])
+    sleep = AsyncMock()
+    monkeypatch.setattr(TelegramSecurityMonitor, "check", base_check)
+    monkeypatch.setattr("app.security.resilient_monitor.asyncio.sleep", sleep)
+
+    await monitor.check(startup=True)
+
+    assert base_check.await_count == 2
+    assert [call.kwargs for call in base_check.await_args_list] == [{"startup": True}, {"startup": True}]
+    sleep.assert_awaited_once_with(monitor.config.telegram_security.monitor_interval_seconds)
+    bot.send_message.assert_not_awaited()
+    events = [json.loads(line) for line in audit.path.read_text().splitlines()]
+    assert any(event["event_type"] == "security_check_network_failed" for event in events)
+    assert any(event["event_type"] == "security_check_network_recovered" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_startup_security_violation_remains_fatal(tmp_path, monkeypatch):
+    monitor, _bot, _audit = make_monitor(tmp_path)
+    base_check = AsyncMock(side_effect=SecurityViolation("identity mismatch"))
+    sleep = AsyncMock()
+    monkeypatch.setattr(TelegramSecurityMonitor, "check", base_check)
+    monkeypatch.setattr("app.security.resilient_monitor.asyncio.sleep", sleep)
+
+    with pytest.raises(SecurityViolation, match="identity mismatch"):
+        await monitor.check(startup=True)
+
+    base_check.assert_awaited_once_with(startup=True)
+    sleep.assert_not_awaited()
 
 
 @pytest.mark.asyncio
