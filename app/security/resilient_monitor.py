@@ -21,6 +21,30 @@ class ResilientTelegramSecurityMonitor(TelegramSecurityMonitor):
         self._consecutive_network_failures = 0
         self._network_failure_alert_delivered = False
 
+    async def check(self, *, startup: bool = False) -> None:
+        if not startup:
+            await super().check(startup=False)
+            return
+
+        retry_seconds = self.config.telegram_security.monitor_interval_seconds
+        while True:
+            try:
+                await super().check(startup=True)
+            except asyncio.CancelledError:
+                raise
+            except SecurityViolation:
+                raise
+            except TelegramNetworkError as exc:
+                await self._handle_network_failure(exc)
+                logger.warning(
+                    "Telegram unavailable during startup security check; retrying in %s seconds",
+                    retry_seconds,
+                )
+                await asyncio.sleep(retry_seconds)
+            else:
+                await self._handle_successful_check()
+                return
+
     @staticmethod
     def _network_stage(exc: TelegramNetworkError) -> str:
         method = getattr(exc, "method", None)
