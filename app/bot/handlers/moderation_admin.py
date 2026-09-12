@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
@@ -66,7 +66,7 @@ async def _show_moderation(callback: CallbackQuery, app_context: AppContext, *, 
         await callback.message.answer(text, reply_markup=markup)
 
 
-async def _restore_permissions(bot, *, chat_id: int, telegram_user_id: int) -> None:
+async def _restore_permissions(bot: Bot, *, chat_id: int, telegram_user_id: int) -> None:
     chat = await bot.get_chat(chat_id)
     permissions = chat.permissions
     if permissions is None:
@@ -132,7 +132,7 @@ async def moderation_select(callback: CallbackQuery, app_context: AppContext) ->
 
 
 @router.callback_query(F.data.startswith("admin_moderation:confirm:"))
-async def moderation_confirm(callback: CallbackQuery, app_context: AppContext) -> None:
+async def moderation_confirm(callback: CallbackQuery, app_context: AppContext, bot: Bot) -> None:
     if not _ensure_admin(app_context, callback.from_user.id):
         await _deny_callback(callback)
         return
@@ -144,7 +144,7 @@ async def moderation_confirm(callback: CallbackQuery, app_context: AppContext) -
             await callback.answer("Этот мут уже отсутствует", show_alert=True)
             return
         await _restore_permissions(
-            callback.bot,
+            bot,
             chat_id=row.chat_id,
             telegram_user_id=row.telegram_user_id,
         )
@@ -175,7 +175,12 @@ async def moderation_manual(callback: CallbackQuery, state: FSMContext, app_cont
 
 
 @router.message(AdminModerationStates.waiting_unmute_user_id)
-async def moderation_manual_user_id(message: Message, state: FSMContext, app_context: AppContext) -> None:
+async def moderation_manual_user_id(
+    message: Message,
+    state: FSMContext,
+    app_context: AppContext,
+    bot: Bot,
+) -> None:
     if not _ensure_admin(app_context, message.from_user.id):
         await state.clear()
         await message.answer("⛔ Недостаточно прав")
@@ -194,7 +199,7 @@ async def moderation_manual_user_id(message: Message, state: FSMContext, app_con
         return
 
     chat_id = app_context.config.text_moderation.chat_ids[0]
-    await _restore_permissions(message.bot, chat_id=chat_id, telegram_user_id=telegram_user_id)
+    await _restore_permissions(bot, chat_id=chat_id, telegram_user_id=telegram_user_id)
     async with app_context.session_maker() as session:
         await ChatModerationMuteService(session).remove_for_user(
             chat_id=chat_id,
