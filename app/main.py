@@ -56,18 +56,22 @@ async def _await_while_monitoring(
 async def run() -> None:
     settings = Settings()
     config = settings.load_yaml_config()
-    if not config.nsfw_moderation.chat_ids:
-        config.nsfw_moderation.chat_ids = list(config.text_moderation.chat_ids)
+    nsfw_config = getattr(config, "nsfw_moderation", None)
+    text_config = getattr(config, "text_moderation", None)
+    if nsfw_config is not None and not nsfw_config.chat_ids and text_config is not None:
+        nsfw_config.chat_ids = list(text_config.chat_ids)
     configure_logging(settings.log_file, config.log_level)
     engine, session_maker = create_engine_and_sessionmaker(settings)
 
     audit = JsonlAudit(settings.security_audit_file, settings.bot_token)
     app_context = build_context(settings, config, session_maker, security_audit=audit)
     bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    nsfw_moderator = NsfwModerationService(bot, session_maker, config.nsfw_moderation)
-    await nsfw_moderator.initialize()
-    nsfw_moderator.start()
-    app_context.nsfw_moderator = nsfw_moderator
+    nsfw_moderator: NsfwModerationService | None = None
+    if nsfw_config is not None:
+        nsfw_moderator = NsfwModerationService(bot, session_maker, nsfw_config)
+        await nsfw_moderator.initialize()
+        nsfw_moderator.start()
+        app_context.nsfw_moderator = nsfw_moderator
 
     update_audit = JsonlAudit(settings.update_audit_file, settings.bot_token, max_bytes=20_000_000)
     security_state = SecurityState(settings.security_state_file)
@@ -114,7 +118,8 @@ async def run() -> None:
             task_name="telegram-polling",
         )
     finally:
-        await nsfw_moderator.close()
+        if nsfw_moderator is not None:
+            await nsfw_moderator.close()
         if monitor_task is not None and not monitor_task.done():
             monitor_task.cancel()
             await asyncio.gather(monitor_task, return_exceptions=True)
