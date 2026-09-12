@@ -5,6 +5,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from app.bot.handlers import admin, admin_panel, common, conversation_admin, registration, start, stats
 from app.bot.middlewares.context import ContextMiddleware
+from app.bot.middlewares.text_moderation import TextModerationMiddleware
 from app.bot.middlewares.update_audit import UpdateAuditMiddleware
 from app.container import AppContext
 from app.conversations import ConversationLogger, IncomingConversationMiddleware
@@ -23,6 +24,7 @@ def create_dispatcher(
     if update_audit is not None and security_state is not None:
         dp.update.outer_middleware(UpdateAuditMiddleware(update_audit, security_state))
     dp.update.middleware(ContextMiddleware(app_context))
+    dp.message.middleware(TextModerationMiddleware(app_context.config.text_moderation))
     dp.include_router(start.router)
     dp.include_router(common.router)
     dp.include_router(registration.router)

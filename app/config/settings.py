@@ -40,6 +40,13 @@ class TelegramSecurityConfig(BaseModel):
     monitor_interval_seconds: int = Field(default=45, ge=30, le=300)
 
 
+class TextModerationConfig(BaseModel):
+    enabled: bool = False
+    chat_ids: list[int] = Field(default_factory=list)
+    mute_minutes: int = Field(default=60, ge=1, le=10080)
+    blocked_terms: list[str] = Field(default_factory=list)
+
+
 class AppYamlConfig(BaseModel):
     main_clan_tag: str
     admin_telegram_ids: list[int] = Field(default_factory=list)
@@ -47,6 +54,7 @@ class AppYamlConfig(BaseModel):
     polling: PollingIntervals = Field(default_factory=PollingIntervals)
     log_level: str = "INFO"
     telegram_security: TelegramSecurityConfig = Field(default_factory=TelegramSecurityConfig)
+    text_moderation: TextModerationConfig = Field(default_factory=TextModerationConfig)
 
     @field_validator("main_clan_tag")
     @classmethod
