@@ -47,6 +47,16 @@ class TextModerationConfig(BaseModel):
     blocked_terms: list[str] = Field(default_factory=list)
 
 
+class NsfwModerationConfig(BaseModel):
+    enabled: bool = False
+    chat_ids: list[int] = Field(default_factory=list)
+    mute_minutes: int = Field(default=60, ge=1, le=10080)
+    scan_interval_seconds: int = Field(default=30, ge=5, le=3600)
+    queue_max_size: int = Field(default=50, ge=1, le=500)
+    max_video_frames: int = Field(default=8, ge=1, le=60)
+    score_threshold: float = Field(default=0.72, ge=0.1, le=0.99)
+
+
 class AppYamlConfig(BaseModel):
     main_clan_tag: str
     admin_telegram_ids: list[int] = Field(default_factory=list)
@@ -55,6 +65,7 @@ class AppYamlConfig(BaseModel):
     log_level: str = "INFO"
     telegram_security: TelegramSecurityConfig = Field(default_factory=TelegramSecurityConfig)
     text_moderation: TextModerationConfig = Field(default_factory=TextModerationConfig)
+    nsfw_moderation: NsfwModerationConfig = Field(default_factory=NsfwModerationConfig)
 
     @field_validator("main_clan_tag")
     @classmethod
