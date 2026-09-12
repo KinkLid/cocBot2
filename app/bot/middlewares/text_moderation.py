@@ -9,16 +9,23 @@ from aiogram import BaseMiddleware, Bot
 from aiogram.enums import ChatMemberStatus, ChatType
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import ChatPermissions, Message
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config.settings import TextModerationConfig
+from app.services.chat_moderation_mutes import ChatModerationMuteService
 from app.services.text_moderation import TextModerationDetector
 
 logger = logging.getLogger(__name__)
 
 
 class TextModerationMiddleware(BaseMiddleware):
-    def __init__(self, config: TextModerationConfig) -> None:
+    def __init__(
+        self,
+        config: TextModerationConfig,
+        session_maker: async_sessionmaker[AsyncSession],
+    ) -> None:
         self.config = config
+        self.session_maker = session_maker
         self.detector = TextModerationDetector(config)
         self._chat_ids = set(config.chat_ids)
 
@@ -74,13 +81,34 @@ class TextModerationMiddleware(BaseMiddleware):
             member = await bot.get_chat_member(chat_id=event.chat.id, user_id=author.id)
             author_is_admin = member.status in {ChatMemberStatus.CREATOR, ChatMemberStatus.ADMINISTRATOR}
             if not author_is_admin and event.chat.type == ChatType.SUPERGROUP:
+                muted_at = datetime.now(UTC)
+                muted_until = muted_at + timedelta(minutes=self.config.mute_minutes)
                 await bot.restrict_chat_member(
                     chat_id=event.chat.id,
                     user_id=author.id,
                     permissions=ChatPermissions(can_send_messages=False),
-                    until_date=datetime.now(UTC) + timedelta(minutes=self.config.mute_minutes),
+                    until_date=muted_until,
                 )
                 muted = True
+                try:
+                    async with self.session_maker() as session:
+                        await ChatModerationMuteService(session).record_mute(
+                            chat_id=event.chat.id,
+                            telegram_user_id=author.id,
+                            username=author.username,
+                            display_name=author.full_name,
+                            rule_id=match.rule_id,
+                            muted_at=muted_at,
+                            muted_until=muted_until,
+                        )
+                        await session.commit()
+                except Exception:
+                    logger.exception(
+                        "Unable to persist moderation mute: chat_id=%s user_id=%s rule=%s",
+                        event.chat.id,
+                        author.id,
+                        match.rule_id,
+                    )
         except TelegramAPIError as exc:
             logger.warning(
                 "Unable to restrict moderated user: chat_id=%s user_id=%s rule=%s error=%s",
