@@ -8,7 +8,7 @@ from app.config.settings import TextModerationConfig
 
 _ZERO_WIDTH_RE = re.compile(r"[\u200b\u200c\u200d\ufeff]")
 _WORD_RE = re.compile(r"\w+", re.UNICODE)
-_REPEATED_LETTER_RE = re.compile(r"([^\W\d_])\1+", re.UNICODE)
+_REPEATED_LETTER_RE = re.compile(r"([^\W\d_])\1{2,}", re.UNICODE)
 
 # Common Latin look-alikes used by the built-in legacy patterns.
 _CYRILLIC_CONFUSABLES = str.maketrans(
