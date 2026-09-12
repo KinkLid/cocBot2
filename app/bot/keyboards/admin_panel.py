@@ -47,9 +47,31 @@ def admin_panel_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="⚙️ Система", callback_data="admin_panel:system"),
                 InlineKeyboardButton(text="🔐 Безопасность", callback_data="admin_panel:security"),
             ],
+            [InlineKeyboardButton(text="🛡 Модерация", callback_data="admin_moderation:list")],
             [InlineKeyboardButton(text="✖️ Закрыть", callback_data="admin_panel:close")],
         ]
     )
+
+
+def moderation_keyboard(entities: Sequence[tuple[str, str]], page: int = 0, page_size: int = 8) -> InlineKeyboardMarkup:
+    page = max(0, page)
+    start = page * page_size
+    end = start + page_size
+    rows = [
+        [InlineKeyboardButton(text=label[:60], callback_data=f"admin_moderation:select:{entity_id}")]
+        for entity_id, label in entities[start:end]
+    ]
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"admin_moderation:page:{page - 1}"))
+    if end < len(entities):
+        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"admin_moderation:page:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_moderation:list")])
+    rows.append([InlineKeyboardButton(text="🏠 Админка", callback_data="admin_panel:root")])
+    rows.append([InlineKeyboardButton(text="✖️ Закрыть", callback_data="admin_panel:close")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def war_keyboard() -> InlineKeyboardMarkup:

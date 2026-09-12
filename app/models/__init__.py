@@ -1,5 +1,6 @@
 from app.models.admin_notification_history import AdminNotificationHistory
 from app.models.attack import Attack
+from app.models.chat_moderation_mute import ChatModerationMute
 from app.models.clan_membership_history import ClanMembershipHistory
 from app.models.manual_contribution_adjustment import ManualContributionAdjustment
 from app.models.clan_settings import ClanSettings
@@ -21,6 +22,7 @@ from app.models.war import War, WarParticipant
 __all__ = [
     "AdminNotificationHistory",
     "Attack",
+    "ChatModerationMute",
     "ClanMembershipHistory",
     "ManualContributionAdjustment",
     "ClanSettings",
