@@ -9,6 +9,7 @@ from app.models.capital_raid_violation import CapitalRaidViolation
 from app.models.cycle_boundary import CycleBoundary
 from app.models.departed_player_archive import DepartedPlayerArchive
 from app.models.enums import PeriodKind, ViolationCode, WarState, WarType
+from app.models.nsfw_moderation_settings import NsfwModerationSettings
 from app.models.player_account import PlayerAccount
 from app.models.player_capital_contribution_snapshot import PlayerCapitalContributionSnapshot
 from app.models.player_donation_snapshot import PlayerDonationSnapshot
@@ -31,6 +32,7 @@ __all__ = [
     "CapitalRaidViolation",
     "CycleBoundary",
     "DepartedPlayerArchive",
+    "NsfwModerationSettings",
     "PeriodKind",
     "PlayerAccount",
     "PlayerCapitalContributionSnapshot",
