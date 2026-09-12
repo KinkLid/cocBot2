@@ -68,3 +68,12 @@ class ChatModerationMuteService:
     async def remove(self, mute_id: int) -> bool:
         result = await self.session.execute(delete(ChatModerationMute).where(ChatModerationMute.id == mute_id))
         return bool(result.rowcount)
+
+    async def remove_for_user(self, *, chat_id: int, telegram_user_id: int) -> bool:
+        result = await self.session.execute(
+            delete(ChatModerationMute).where(
+                ChatModerationMute.chat_id == chat_id,
+                ChatModerationMute.telegram_user_id == telegram_user_id,
+            )
+        )
+        return bool(result.rowcount)
