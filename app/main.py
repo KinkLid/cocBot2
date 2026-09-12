@@ -18,6 +18,7 @@ from app.jobs.scheduler import create_scheduler
 from app.security.audit import JsonlAudit, SecurityState
 from app.security.monitor import SecurityAlerts
 from app.security.resilient_monitor import ResilientTelegramSecurityMonitor
+from app.services.nsfw_moderation import NsfwModerationService
 from app.services.startup_sync import StartupSyncService
 from app.utils.logging import configure_logging
 
@@ -61,6 +62,11 @@ async def run() -> None:
     audit = JsonlAudit(settings.security_audit_file, settings.bot_token)
     app_context = build_context(settings, config, session_maker, security_audit=audit)
     bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    nsfw_moderator = NsfwModerationService(bot, session_maker, config.nsfw_moderation)
+    await nsfw_moderator.initialize()
+    nsfw_moderator.start()
+    app_context.nsfw_moderator = nsfw_moderator
+
     update_audit = JsonlAudit(settings.update_audit_file, settings.bot_token, max_bytes=20_000_000)
     security_state = SecurityState(settings.security_state_file)
     conversation_logger: ConversationLogger | None = None
@@ -106,6 +112,7 @@ async def run() -> None:
             task_name="telegram-polling",
         )
     finally:
+        await nsfw_moderator.close()
         if monitor_task is not None and not monitor_task.done():
             monitor_task.cancel()
             await asyncio.gather(monitor_task, return_exceptions=True)
