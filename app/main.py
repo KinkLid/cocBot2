@@ -18,6 +18,7 @@ from app.jobs.scheduler import create_scheduler
 from app.security.audit import JsonlAudit, SecurityState
 from app.security.monitor import SecurityAlerts
 from app.security.resilient_monitor import ResilientTelegramSecurityMonitor
+from app.services.nsfw_moderation import NsfwModerationService
 from app.services.startup_sync import StartupSyncService
 from app.utils.logging import configure_logging
 
@@ -55,12 +56,23 @@ async def _await_while_monitoring(
 async def run() -> None:
     settings = Settings()
     config = settings.load_yaml_config()
+    nsfw_config = getattr(config, "nsfw_moderation", None)
+    text_config = getattr(config, "text_moderation", None)
+    if nsfw_config is not None and not nsfw_config.chat_ids and text_config is not None:
+        nsfw_config.chat_ids = list(text_config.chat_ids)
     configure_logging(settings.log_file, config.log_level)
     engine, session_maker = create_engine_and_sessionmaker(settings)
 
     audit = JsonlAudit(settings.security_audit_file, settings.bot_token)
     app_context = build_context(settings, config, session_maker, security_audit=audit)
     bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    nsfw_moderator: NsfwModerationService | None = None
+    if nsfw_config is not None:
+        nsfw_moderator = NsfwModerationService(bot, session_maker, nsfw_config)
+        await nsfw_moderator.initialize()
+        nsfw_moderator.start()
+        app_context.nsfw_moderator = nsfw_moderator
+
     update_audit = JsonlAudit(settings.update_audit_file, settings.bot_token, max_bytes=20_000_000)
     security_state = SecurityState(settings.security_state_file)
     conversation_logger: ConversationLogger | None = None
@@ -106,6 +118,8 @@ async def run() -> None:
             task_name="telegram-polling",
         )
     finally:
+        if nsfw_moderator is not None:
+            await nsfw_moderator.close()
         if monitor_task is not None and not monitor_task.done():
             monitor_task.cancel()
             await asyncio.gather(monitor_task, return_exceptions=True)

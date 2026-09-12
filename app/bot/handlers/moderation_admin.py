@@ -14,6 +14,13 @@ from app.services.chat_moderation_mutes import ChatModerationMuteService
 
 router = Router(name="moderation_admin")
 
+_NSFW_INTERVALS: tuple[tuple[int, str], ...] = (
+    (10, "⚡ 10 сек"),
+    (30, "✅ 30 сек"),
+    (60, "🐢 1 мин"),
+    (300, "🪫 5 мин"),
+)
+
 
 def _ensure_admin(app_context: AppContext, telegram_id: int) -> bool:
     return app_context.auth_service.is_admin(telegram_id)
@@ -33,8 +40,37 @@ def _display_name(row) -> str:
 
 def _with_manual_button(markup: InlineKeyboardMarkup) -> InlineKeyboardMarkup:
     rows = list(markup.inline_keyboard)
-    rows.insert(0, [InlineKeyboardButton(text="🔢 Снять мут по Telegram ID", callback_data="admin_moderation:manual")])
+    rows.insert(0, [InlineKeyboardButton(text="🖼 NSFW-фильтр", callback_data="admin_nsfw:status")])
+    rows.insert(1, [InlineKeyboardButton(text="🔢 Снять мут по Telegram ID", callback_data="admin_moderation:manual")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _nsfw_keyboard(*, enabled: bool, interval_seconds: int) -> InlineKeyboardMarkup:
+    toggle_text = "⏸ Выключить NSFW" if enabled else "▶️ Включить NSFW"
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text=toggle_text, callback_data=f"admin_nsfw:enabled:{0 if enabled else 1}")],
+        [InlineKeyboardButton(text="⏱ Интервал анализа", callback_data="admin_nsfw:noop")],
+    ]
+    for seconds, label in _NSFW_INTERVALS:
+        prefix = "☑️ " if seconds == interval_seconds else ""
+        rows.append(
+            [InlineKeyboardButton(text=f"{prefix}{label}", callback_data=f"admin_nsfw:interval:{seconds}")]
+        )
+    rows.extend(
+        [
+            [InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_nsfw:status")],
+            [InlineKeyboardButton(text="⬅️ Модерация", callback_data="admin_moderation:list")],
+            [InlineKeyboardButton(text="🏠 Админка", callback_data="admin_panel:root")],
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _format_interval(seconds: int) -> str:
+    if seconds % 60 == 0:
+        minutes = seconds // 60
+        return f"{minutes} мин"
+    return f"{seconds} сек"
 
 
 async def _active_mute_entities(app_context: AppContext) -> list[tuple[str, str]]:
@@ -64,6 +100,37 @@ async def _show_moderation(callback: CallbackQuery, app_context: AppContext, *, 
         await callback.message.edit_text(text, reply_markup=markup)
     except Exception:
         await callback.message.answer(text, reply_markup=markup)
+
+
+async def _show_nsfw(callback: CallbackQuery, app_context: AppContext) -> None:
+    service = app_context.nsfw_moderator
+    if service is None:
+        await callback.answer("NSFW worker не запущен", show_alert=True)
+        return
+    status = service.status()
+    state = "🟢 включён" if status.enabled else "⚪ выключен"
+    worker = "работает" if status.worker_running else "остановлен"
+    last_result = status.last_result or "ещё не было проверок"
+    text = (
+        "🖼 <b>NSFW-фильтр</b>\n\n"
+        f"Состояние: <b>{state}</b>\n"
+        f"Интервал: <b>{_format_interval(status.scan_interval_seconds)}</b>\n"
+        f"Очередь: <b>{status.queued}/{status.queue_max_size}</b>\n"
+        f"Worker: <b>{worker}</b>\n"
+        f"Последний результат: <code>{last_result}</code>\n\n"
+        "Анализ идёт строго по одному медиа-объекту. Чем больше интервал, тем меньше средняя нагрузка на слабый сервер. "
+        "Для обычного режима рекомендуется 30 секунд; для очень слабого VPS — 1–5 минут."
+    )
+    try:
+        await callback.message.edit_text(
+            text,
+            reply_markup=_nsfw_keyboard(enabled=status.enabled, interval_seconds=status.scan_interval_seconds),
+        )
+    except Exception:
+        await callback.message.answer(
+            text,
+            reply_markup=_nsfw_keyboard(enabled=status.enabled, interval_seconds=status.scan_interval_seconds),
+        )
 
 
 async def _restore_permissions(bot: Bot, *, chat_id: int, telegram_user_id: int) -> None:
@@ -97,6 +164,57 @@ async def moderation_list(callback: CallbackQuery, state: FSMContext, app_contex
     await state.clear()
     await _show_moderation(callback, app_context)
     await callback.answer()
+
+
+@router.callback_query(F.data == "admin_nsfw:status")
+async def nsfw_status(callback: CallbackQuery, app_context: AppContext) -> None:
+    if not _ensure_admin(app_context, callback.from_user.id):
+        await _deny_callback(callback)
+        return
+    await _show_nsfw(callback, app_context)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_nsfw:noop")
+async def nsfw_noop(callback: CallbackQuery, app_context: AppContext) -> None:
+    if not _ensure_admin(app_context, callback.from_user.id):
+        await _deny_callback(callback)
+        return
+    await callback.answer("Выберите интервал ниже")
+
+
+@router.callback_query(F.data.startswith("admin_nsfw:enabled:"))
+async def nsfw_toggle(callback: CallbackQuery, app_context: AppContext) -> None:
+    if not _ensure_admin(app_context, callback.from_user.id):
+        await _deny_callback(callback)
+        return
+    service = app_context.nsfw_moderator
+    if service is None:
+        await callback.answer("NSFW worker не запущен", show_alert=True)
+        return
+    enabled = (callback.data or "").rsplit(":", 1)[1] == "1"
+    await service.update_runtime(enabled=enabled)
+    await _show_nsfw(callback, app_context)
+    await callback.answer("NSFW-фильтр включён" if enabled else "NSFW-фильтр выключен")
+
+
+@router.callback_query(F.data.startswith("admin_nsfw:interval:"))
+async def nsfw_interval(callback: CallbackQuery, app_context: AppContext) -> None:
+    if not _ensure_admin(app_context, callback.from_user.id):
+        await _deny_callback(callback)
+        return
+    service = app_context.nsfw_moderator
+    if service is None:
+        await callback.answer("NSFW worker не запущен", show_alert=True)
+        return
+    seconds = int((callback.data or "").rsplit(":", 1)[1])
+    allowed = {value for value, _label in _NSFW_INTERVALS}
+    if seconds not in allowed:
+        await callback.answer("Недопустимый интервал", show_alert=True)
+        return
+    await service.update_runtime(scan_interval_seconds=seconds)
+    await _show_nsfw(callback, app_context)
+    await callback.answer(f"Интервал: {_format_interval(seconds)}")
 
 
 @router.callback_query(F.data.startswith("admin_moderation:page:"))

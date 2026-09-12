@@ -5,6 +5,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from app.bot.handlers import admin, admin_panel, common, conversation_admin, moderation_admin, registration, start, stats
 from app.bot.middlewares.context import ContextMiddleware
+from app.bot.middlewares.nsfw_moderation import NsfwModerationMiddleware
 from app.bot.middlewares.text_moderation import TextModerationMiddleware
 from app.bot.middlewares.update_audit import UpdateAuditMiddleware
 from app.container import AppContext
@@ -27,6 +28,8 @@ def create_dispatcher(
     dp.message.outer_middleware(
         TextModerationMiddleware(app_context.config.text_moderation, app_context.session_maker)
     )
+    if app_context.nsfw_moderator is not None:
+        dp.message.outer_middleware(NsfwModerationMiddleware(app_context.nsfw_moderator))
     dp.include_router(start.router)
     dp.include_router(common.router)
     dp.include_router(registration.router)
