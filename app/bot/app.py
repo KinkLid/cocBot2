@@ -24,7 +24,9 @@ def create_dispatcher(
     if update_audit is not None and security_state is not None:
         dp.update.outer_middleware(UpdateAuditMiddleware(update_audit, security_state))
     dp.update.middleware(ContextMiddleware(app_context))
-    dp.message.outer_middleware(TextModerationMiddleware(app_context.config.text_moderation))
+    dp.message.outer_middleware(
+        TextModerationMiddleware(app_context.config.text_moderation, app_context.session_maker)
+    )
     dp.include_router(start.router)
     dp.include_router(common.router)
     dp.include_router(registration.router)
