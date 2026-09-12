@@ -16,9 +16,7 @@ def test_text_moderation_disabled_by_default() -> None:
 
 
 def test_configured_blocked_term_is_normalized() -> None:
-    detector = TextModerationDetector(
-        TextModerationConfig(blocked_terms=["запрещенная фраза"])
-    )
+    detector = TextModerationDetector(TextModerationConfig(blocked_terms=["запрещенная фраза"]))
 
     match = detector.detect("Это ЗАПРЕЩЕННАЯ   ФРАЗА здесь")
 
@@ -69,11 +67,77 @@ def test_russian_slur_obfuscations_are_detected(text: str) -> None:
 @pytest.mark.parametrize(
     "text",
     [
+        "ниггер",
+        "нигга",
+        "черножопый",
+        "черномазый",
+        "nigger",
+        "n1gger",
+        "nigga",
+        "coon",
+        "darkie",
+        "porch monkey",
+    ],
+)
+def test_black_slurs_are_detected(text: str) -> None:
+    detector = TextModerationDetector(TextModerationConfig())
+
+    assert detector.detect(text) is not None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "жид",
+        "жиды",
+        "жидяра",
+        "жидовня",
+        "жидобольшевики",
+        "жидомасоны",
+        "kike",
+        "heeb",
+    ],
+)
+def test_antisemitic_slurs_are_detected(text: str) -> None:
+    detector = TextModerationDetector(TextModerationConfig())
+
+    assert detector.detect(text) is not None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "хач",
+        "хачик",
+        "чурка",
+        "узкоглазый",
+        "chink",
+        "spic",
+        "wetback",
+        "paki",
+        "raghead",
+    ],
+)
+def test_other_ethnic_slurs_are_detected(text: str) -> None:
+    detector = TextModerationDetector(TextModerationConfig())
+
+    assert detector.detect(text) is not None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
         "украинцы не люди",
         "украинцы вообще не люди",
         "украинцы мерзкие недолюди",
         "русские не люди",
         "евреи недолюди",
+        "чернокожие не люди",
+        "негры животные",
+        "африканцы обезьяны",
+        "чеченцы тараканы",
+        "узбеки биомусор",
+        "арабы выродки",
     ],
 )
 def test_dehumanizing_identity_phrases_are_detected(text: str) -> None:
@@ -93,9 +157,44 @@ def test_dehumanizing_identity_phrases_are_detected(text: str) -> None:
         "убивайте украинцев",
         "русских нужно истребить",
         "смерть русским",
+        "евреев надо уничтожить",
+        "чернокожих нужно убивать",
+        "смерть неграм",
+        "узбеков надо вырезать",
+        "арабов нужно расстреливать",
     ],
 )
 def test_identity_violence_advocacy_is_detected(text: str) -> None:
+    detector = TextModerationDetector(TextModerationConfig())
+
+    assert detector.detect(text) is not None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "евреев надо выгнать",
+        "нужно депортировать всех узбеков",
+        "чернокожих нужно выселить",
+        "арабов пора изгнать",
+    ],
+)
+def test_identity_exclusion_advocacy_is_detected(text: str) -> None:
+    detector = TextModerationDetector(TextModerationConfig())
+
+    assert detector.detect(text) is not None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "евреи управляют миром",
+        "евреи контролируют все банки",
+        "жиды захватили сми",
+        "евреи правят мировой экономикой",
+    ],
+)
+def test_antisemitic_conspiracy_claims_are_detected(text: str) -> None:
     detector = TextModerationDetector(TextModerationConfig())
 
     assert detector.detect(text) is not None
@@ -108,9 +207,33 @@ def test_identity_violence_advocacy_is_detected(text: str) -> None:
         "украинцев не надо убивать",
         "не нужно уничтожать русских",
         "я против того чтобы убивать украинцев",
+        "не надо выгонять евреев",
+        "евреев не нужно депортировать",
     ],
 )
 def test_common_non_advocacy_contexts_are_not_flagged(text: str) -> None:
+    detector = TextModerationDetector(TextModerationConfig())
+
+    assert detector.detect(text) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "он еврей",
+        "она чернокожая",
+        "он африканец",
+        "он узбек",
+        "она казашка",
+        "он араб",
+        "он мусульманин",
+        "он китаец",
+        "он чеченец",
+        "он украинец",
+        "он русский",
+    ],
+)
+def test_neutral_identity_mentions_are_not_flagged(text: str) -> None:
     detector = TextModerationDetector(TextModerationConfig())
 
     assert detector.detect(text) is None

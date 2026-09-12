@@ -8,7 +8,7 @@ from app.config.settings import TextModerationConfig
 
 _ZERO_WIDTH_RE = re.compile(r"[\u200b\u200c\u200d\ufeff]")
 _WORD_RE = re.compile(r"\w+", re.UNICODE)
-_REPEATED_LETTER_RE = re.compile(r"([^\W\d_])\1+", re.UNICODE)
+_REPEATED_LETTER_RE = re.compile(r"([^\W\d_])\1{2,}", re.UNICODE)
 
 # Common Latin look-alikes used by the built-in legacy patterns.
 _CYRILLIC_CONFUSABLES = str.maketrans(
@@ -103,8 +103,8 @@ _TERM_CHAR_ALIASES: dict[str, str] = {
     "я": "яr",
 }
 
-# Keep the original built-in list conservative. Clan-specific terms can still
-# be extended through text_moderation.blocked_terms.
+# High-confidence slurs. Neutral identity words are intentionally excluded;
+# they are handled only when combined with dehumanization/violence below.
 _RUSSIAN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "ru_nword",
@@ -113,7 +113,15 @@ _RUSSIAN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
             re.IGNORECASE,
         ),
     ),
+    (
+        "ru_nword_nigga",
+        re.compile(
+            r"(?<!\w)н[\W_]*и[\W_]*г[\W_]*г?[\W_]*а(?:м|ми|х)?(?!\w)",
+            re.IGNORECASE,
+        ),
+    ),
     ("ru_black_slur", re.compile(r"(?<!\w)черножоп\w*(?!\w)", re.IGNORECASE)),
+    ("ru_black_slur_secondary", re.compile(r"(?<!\w)черномаз\w*(?!\w)", re.IGNORECASE)),
     (
         "ru_caucasus_slur",
         re.compile(r"(?<!\w)хач(?:и|ей|ами|ах|ик(?:и|а|у|ом|е|ов|ам|ами|ах)?)?(?!\w)", re.IGNORECASE),
@@ -127,6 +135,13 @@ _RUSSIAN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "ru_antisemitic_slur",
         re.compile(r"(?<!\w)жид(?:ы|а|у|ом|е|ов|ам|ами|ах)?(?!\w)", re.IGNORECASE),
     ),
+    (
+        "ru_antisemitic_compound_slur",
+        re.compile(
+            r"(?<!\w)(?:жидяр\w*|жидовн\w*|жидобольшев\w*|жидомасон\w*)(?!\w)",
+            re.IGNORECASE,
+        ),
+    ),
 )
 
 _ENGLISH_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -137,14 +152,24 @@ _ENGLISH_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
             re.IGNORECASE,
         ),
     ),
+    ("en_black_slur_coon", re.compile(r"(?<![a-z0-9])coons?(?![a-z0-9])", re.IGNORECASE)),
+    ("en_black_slur_darkie", re.compile(r"(?<![a-z0-9])dark(?:ie|y)s?(?![a-z0-9])", re.IGNORECASE)),
+    (
+        "en_black_slur_phrase",
+        re.compile(r"(?<![a-z0-9])porch[^a-z0-9]+monkeys?(?![a-z0-9])", re.IGNORECASE),
+    ),
     ("en_antisemitic_slur", re.compile(r"(?<![a-z0-9])kikes?(?![a-z0-9])", re.IGNORECASE)),
+    ("en_antisemitic_slur_heeb", re.compile(r"(?<![a-z0-9])heebs?(?![a-z0-9])", re.IGNORECASE)),
     ("en_asian_slur", re.compile(r"(?<![a-z0-9])chinks?(?![a-z0-9])", re.IGNORECASE)),
     ("en_hispanic_slur", re.compile(r"(?<![a-z0-9])spics?(?![a-z0-9])", re.IGNORECASE)),
+    ("en_hispanic_slur_wetback", re.compile(r"(?<![a-z0-9])wetbacks?(?![a-z0-9])", re.IGNORECASE)),
+    ("en_south_asian_slur", re.compile(r"(?<![a-z0-9])pakis?(?![a-z0-9])", re.IGNORECASE)),
+    ("en_middle_east_slur", re.compile(r"(?<![a-z0-9])ragheads?(?![a-z0-9])", re.IGNORECASE)),
 )
 
-# High-confidence Russian-language slurs relevant to the clan chat. These are
-# evaluated on a hardened moderation-only representation, so mixed Latin,
-# leetspeak and punctuation-separated spellings are normalized first.
+# High-confidence Russian-language slurs evaluated on a hardened moderation-only
+# representation, so mixed Latin, leetspeak and punctuation-separated spellings
+# are normalized first.
 _HARDENED_SLUR_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "ru_ukrainian_slur",
@@ -157,10 +182,32 @@ _HARDENED_SLUR_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "ru_russian_slur",
         re.compile(r"(?<!\w)(?:кацап\w*|москал\w*|русня)(?!\w)", re.IGNORECASE),
     ),
+    (
+        "ru_black_slur_hardened",
+        re.compile(r"(?<!\w)(?:черножоп\w*|черномаз\w*)(?!\w)", re.IGNORECASE),
+    ),
+    (
+        "ru_antisemitic_slur_hardened",
+        re.compile(
+            r"(?<!\w)(?:жидяр\w*|жидовн\w*|жидобольшев\w*|жидомасон\w*)(?!\w)",
+            re.IGNORECASE,
+        ),
+    ),
 )
 
-_IDENTITY = r"(?:украинц\w*|руск\w*|русня|евре\w*|кавказц\w*|азиат\w*|хохол\w*|хохл\w*|кацап\w*|москал\w*)"
-_DEHUMANIZING = r"(?:не\s+люди|нелюди|недолюди|мрази|твари|паразиты|отбросы)"
+_IDENTITY = (
+    r"(?:украинц\w*|русс?к\w*|русня|евре\w*|иуде\w*|"
+    r"чернокож\w*|негр\w*|африканц\w*|"
+    r"кавказц\w*|чеченц\w*|дагестанц\w*|армян\w*|грузин\w*|азербайджанц\w*|"
+    r"азиат\w*|китайц\w*|корейц\w*|узбек\w*|таджик\w*|киргиз\w*|казах\w*|"
+    r"араб\w*|мусулман\w*|цыган\w*|"
+    r"хохол\w*|хохл\w*|кацап\w*|москал\w*)"
+)
+_DEHUMANIZING = (
+    r"(?:не\s+люди|нелюди|недолюди|мрази|твари|паразиты|отбросы|"
+    r"животн\w*|обезьян\w*|свинь\w*|скот\w*|крысы|тараканы|"
+    r"биомусор|мусор|грязь|выродк\w*)"
+)
 _ADVOCACY = r"(?:надо|нужно|следует|пора)"
 _NON_NEGATED_WORDS = r"(?:\s+(?!не\b)\w+){0,3}"
 _VIOLENCE_VERB = (
@@ -174,6 +221,10 @@ _IMPERATIVE_VIOLENCE = (
     r"(?:убивай\w*|уничтожай\w*|истребляй\w*|вырезай\w*|"
     r"режь\w*|расстреливай\w*|стреляй\w*|бей\w*|жги\w*)"
 )
+_EXCLUSION_VERB = r"(?:выгнать|изгнать|депортировать|выселить)"
+_ANTISEMITIC_SUBJECT = r"(?:евре\w*|жид(?:ы|а|у|ом|е|ов|ам|ами|ах)?)"
+_CONSPIRACY_VERB = r"(?:управляют|контролируют|захватили|правят)"
+_CONSPIRACY_OBJECT = r"(?:мир\w*|бан\w*|сми|правительств\w*|экономик\w*|финанс\w*)"
 
 _HARDENED_CONTEXT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
@@ -203,6 +254,26 @@ _HARDENED_CONTEXT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "hate_death_slogan",
         re.compile(rf"(?<!\w)смерть(?:\s+\w+){{0,2}}\s+{_IDENTITY}(?!\w)", re.IGNORECASE),
+    ),
+    (
+        "hate_exclusion_advocacy",
+        re.compile(
+            rf"(?<!не )\b{_ADVOCACY}\b{_NON_NEGATED_WORDS}\s+{_EXCLUSION_VERB}"
+            rf"(?:\s+\w+){{0,3}}\s+{_IDENTITY}(?!\w)|"
+            rf"(?<!\w){_IDENTITY}(?:\s+\w+){{0,3}}\s+(?<!не )\b{_ADVOCACY}\b"
+            rf"{_NON_NEGATED_WORDS}\s+{_EXCLUSION_VERB}(?!\w)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "antisemitic_conspiracy",
+        re.compile(
+            rf"(?<!\w){_ANTISEMITIC_SUBJECT}{_NON_NEGATED_WORDS}\s+{_CONSPIRACY_VERB}"
+            rf"(?:\s+\w+){{0,2}}\s+{_CONSPIRACY_OBJECT}(?!\w)|"
+            rf"(?<!не )\b{_CONSPIRACY_OBJECT}\b(?:\s+\w+){{0,2}}\s+{_CONSPIRACY_VERB}"
+            rf"(?:\s+\w+){{0,2}}\s+{_ANTISEMITIC_SUBJECT}(?!\w)",
+            re.IGNORECASE,
+        ),
     ),
 )
 
