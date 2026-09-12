@@ -9,7 +9,6 @@ polling:
   housekeeping_seconds: 3600
 log_level: "INFO"
 telegram_security:
-  # Required in production: obtain these from BotFather/getMe, never put a token here.
   expected_bot_id: null
   expected_username: null
   expected_display_name: null
@@ -17,6 +16,10 @@ telegram_security:
   expected_short_description: null
   expected_commands: null
   restore_profile: false
-  # Set true only after expected_bot_id and expected_username are populated.
   require_identity_baseline: false
   monitor_interval_seconds: 45
+text_moderation:
+  enabled: false
+  chat_ids: []
+  mute_minutes: 60
+  blocked_terms: []
