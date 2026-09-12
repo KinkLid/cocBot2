@@ -22,6 +22,7 @@ dependencies = [
   "orjson>=3.10,<4.0",
   "tenacity>=9.0,<10.0",
   "python-dotenv>=1.0,<2.0",
+  "nudenet>=3.4.2,<4.0",
 ]
 
 [project.optional-dependencies]
