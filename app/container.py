@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -12,6 +12,9 @@ from app.config.settings import AppYamlConfig, Settings
 from app.services.auth import AuthService
 from app.services.logs import LogService
 from app.security.audit import JsonlAudit
+
+if TYPE_CHECKING:
+    from app.services.nsfw_moderation import NsfwModerationService
 
 
 @dataclass(slots=True)
@@ -24,6 +27,7 @@ class AppContext:
     log_service: LogService
     export_dir: Path = Path("./exports")
     security_audit: JsonlAudit | None = None
+    nsfw_moderator: NsfwModerationService | None = None
 
 
 async def send_text_via_bot(bot: Bot, chat_id: int, text: str) -> None:
