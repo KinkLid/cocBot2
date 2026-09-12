@@ -4,8 +4,9 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from aiogram import BaseMiddleware
+from aiogram import BaseMiddleware, Bot
 from aiogram.enums import ChatType
+from aiogram.exceptions import TelegramAPIError
 from aiogram.types import Message
 
 from app.services.nsfw_moderation import NsfwModerationService, NsfwQueueItem
@@ -51,12 +52,23 @@ class NsfwModerationMiddleware(BaseMiddleware):
             )
         )
         if not queued:
-            logger.warning(
-                "NSFW media was not queued: chat_id=%s message_id=%s kind=%s",
+            logger.error(
+                "NSFW media rejected because moderation queue is full: chat_id=%s message_id=%s kind=%s",
                 event.chat.id,
                 event.message_id,
                 media_kind,
             )
+            bot = data.get("bot")
+            if isinstance(bot, Bot):
+                try:
+                    await bot.delete_message(chat_id=event.chat.id, message_id=event.message_id)
+                except TelegramAPIError:
+                    logger.exception(
+                        "Unable to delete media after NSFW queue overflow: chat_id=%s message_id=%s",
+                        event.chat.id,
+                        event.message_id,
+                    )
+            return None
         return await handler(event, data)
 
 
