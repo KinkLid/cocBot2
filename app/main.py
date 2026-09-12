@@ -56,6 +56,8 @@ async def _await_while_monitoring(
 async def run() -> None:
     settings = Settings()
     config = settings.load_yaml_config()
+    if not config.nsfw_moderation.chat_ids:
+        config.nsfw_moderation.chat_ids = list(config.text_moderation.chat_ids)
     configure_logging(settings.log_file, config.log_level)
     engine, session_maker = create_engine_and_sessionmaker(settings)
 
